@@ -5,7 +5,7 @@ plugins {
     id("com.gradleup.nmcp") version "1.4.4"
 }
 
-group = "tech.codingzen.resultkit"
+group = "tech.codingzen"
 version = "1.0-SNAPSHOT"
 
 repositories {
