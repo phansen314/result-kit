@@ -42,6 +42,12 @@ class CatchScope @PublishedApi internal constructor() {
    * @param provider a function returning the error message string
    */
   fun message(provider: () -> String) { _message = provider }
+
+  @PublishedApi
+  internal fun toErr(exc: Exception): Res.Err {
+    val msg = _message?.invoke()
+    return if (msg != null) Res.error(exc, msg) else Res.error(exc)
+  }
 }
 
 /**
@@ -133,8 +139,7 @@ class ResDsl internal constructor() {
     } catch (exc: ErrException) {
       throw exc
     } catch (exc: Exception) {
-      val msg = scope._message?.invoke()
-      throw ErrException(if (msg != null) Res.error(exc, msg) else Res.error(exc))
+      throw ErrException(scope.toErr(exc))
     }
   }
 }
@@ -194,7 +199,6 @@ inline fun <T> catch(block: CatchScope.() -> T): Res<T> {
   return try {
     Res.value(scope.block())
   } catch (exc: Exception) {
-    val msg = scope._message?.invoke()
-    if (msg != null) Res.error(exc, msg) else Res.error(exc)
+    scope.toErr(exc)
   }
 }

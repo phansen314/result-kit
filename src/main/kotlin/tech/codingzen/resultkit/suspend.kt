@@ -78,8 +78,7 @@ class SuspendResDsl internal constructor() {
     } catch (exc: ErrException) {
       throw exc
     } catch (exc: Exception) {
-      val msg = scope._message?.invoke()
-      throw ErrException(if (msg != null) Res.error(exc, msg) else Res.error(exc))
+      throw ErrException(scope.toErr(exc))
     }
   }
 }
@@ -139,7 +138,6 @@ suspend inline fun <T> suspendCatch(crossinline block: suspend CatchScope.() -> 
   return try {
     Res.value(scope.block())
   } catch (exc: Exception) {
-    val msg = scope._message?.invoke()
-    if (msg != null) Res.error(exc, msg) else Res.error(exc)
+    scope.toErr(exc)
   }
 }
