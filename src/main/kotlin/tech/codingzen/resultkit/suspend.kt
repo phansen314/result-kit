@@ -114,3 +114,32 @@ suspend inline fun <T> suspendRes(crossinline block: suspend SuspendResDsl.() ->
   } catch (exc: Exception) {
     Res.Err.UncaughtThrown(exc)
   }
+
+/**
+ * Suspend counterpart to the top-level [catch] function.
+ *
+ * Wraps a single suspend throwing operation into a [Res], with [CatchScope] message support.
+ * Every exception becomes [Res.Err.Thrown] — there is no [Res.Err.UncaughtThrown] case since
+ * there is no outer DSL to escape from.
+ *
+ * ```
+ * val user: Res<User> = suspendCatch {
+ *   message { "failed to fetch user $id" }
+ *   userService.fetch(id)
+ * }
+ * ```
+ *
+ * @param block the suspend code to execute within a [CatchScope]
+ * @return [Res.Ok] with the block's result, or [Res.Err.Thrown] if an exception was thrown
+ * @see suspendRes for the full suspend DSL with chaining support
+ * @see catch the synchronous equivalent
+ */
+suspend inline fun <T> suspendCatch(crossinline block: suspend CatchScope.() -> T): Res<T> {
+  val scope = CatchScope()
+  return try {
+    Res.value(scope.block())
+  } catch (exc: Exception) {
+    val msg = scope._message?.invoke()
+    if (msg != null) Res.error(exc, msg) else Res.error(exc)
+  }
+}

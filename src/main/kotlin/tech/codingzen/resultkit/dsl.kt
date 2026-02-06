@@ -170,3 +170,31 @@ inline fun <T> res(block: ResDsl.() -> T): Res<T> =
   } catch (exc: Exception) {
     Res.Err.UncaughtThrown(exc)
   }
+
+/**
+ * Wraps a single throwing operation into a [Res], with [CatchScope] message support.
+ *
+ * Unlike [res]`{ catch { ... } }`, this avoids the outer DSL scope when all you need
+ * is exception-to-[Res] conversion. Every exception becomes [Res.Err.Thrown] — there
+ * is no [Res.Err.UncaughtThrown] case since there is no outer DSL to escape from.
+ *
+ * ```
+ * val config: Res<Config> = catch {
+ *   message { "failed to load config from $path" }
+ *   loadConfig(path)
+ * }
+ * ```
+ *
+ * @param block the code to execute within a [CatchScope]
+ * @return [Res.Ok] with the block's result, or [Res.Err.Thrown] if an exception was thrown
+ * @see res for the full DSL with [ResDsl.ok], [ResDsl.err], and chaining support
+ */
+inline fun <T> catch(block: CatchScope.() -> T): Res<T> {
+  val scope = CatchScope()
+  return try {
+    Res.value(scope.block())
+  } catch (exc: Exception) {
+    val msg = scope._message?.invoke()
+    if (msg != null) Res.error(exc, msg) else Res.error(exc)
+  }
+}
