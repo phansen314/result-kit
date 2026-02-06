@@ -46,7 +46,7 @@ fun parseUserId(input: String): Res<Int> = catch {
 fun fetchUser(id: Int): Res<User> = res {
     if (id < 0) err("User ID must be positive")
     // Simulate fetch
-    Res.value(User(id, "User $id"))
+    User(id, "User $id")
 }
 
 fun getUserName(input: String): Res<String> = res {
