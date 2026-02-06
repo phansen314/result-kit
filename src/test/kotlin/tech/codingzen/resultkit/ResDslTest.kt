@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertIs
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ResDslTest {
@@ -251,5 +252,56 @@ class ResDslTest {
     }
     assertIs<Res.Err.Thrown>(result)
     assertEquals("b failed", result.message)
+  }
+
+  // -- top-level catch --
+
+  @Test
+  fun `top-level catch returns Ok on success`() {
+    val result = catch { 42 }
+    assertIs<Res.Ok<Int>>(result)
+    assertEquals(42, result.value)
+  }
+
+  @Test
+  fun `top-level catch returns Thrown on exception`() {
+    val exc = RuntimeException("boom")
+    val result = catch { throw exc }
+    assertIs<Res.Err.Thrown>(result)
+    assertSame(exc, result.exception)
+    assertNull(result.message)
+  }
+
+  @Test
+  fun `top-level catch returns Thrown with message`() {
+    val result = catch {
+      message { "operation failed" }
+      throw RuntimeException("boom")
+    }
+    assertIs<Res.Err.Thrown>(result)
+    assertEquals("operation failed", result.message)
+  }
+
+  @Test
+  fun `top-level catch message is lazy`() {
+    var evaluated = false
+    val result = catch {
+      message { evaluated = true; "should not evaluate" }
+      42
+    }
+    assertIs<Res.Ok<Int>>(result)
+    assertEquals(false, evaluated)
+  }
+
+  @Test
+  fun `top-level catch uses most recent message`() {
+    val result = catch {
+      message { "first" }
+      val step1 = "done"
+      message { "second after $step1" }
+      throw RuntimeException("boom")
+    }
+    assertIs<Res.Err.Thrown>(result)
+    assertEquals("second after done", result.message)
   }
 }

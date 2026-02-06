@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertIs
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class SuspendResDslTest {
 
@@ -214,5 +215,56 @@ class SuspendResDslTest {
     }
     assertIs<Res.Err.Message>(result)
     assertEquals("fail at b", result.message)
+  }
+
+  // -- top-level suspendCatch --
+
+  @Test
+  fun `top-level suspendCatch returns Ok on success`() = runTest {
+    val result = suspendCatch { 42 }
+    assertIs<Res.Ok<Int>>(result)
+    assertEquals(42, result.value)
+  }
+
+  @Test
+  fun `top-level suspendCatch returns Thrown on exception`() = runTest {
+    val exc = RuntimeException("boom")
+    val result = suspendCatch { throw exc }
+    assertIs<Res.Err.Thrown>(result)
+    assertSame(exc, result.exception)
+    assertNull(result.message)
+  }
+
+  @Test
+  fun `top-level suspendCatch returns Thrown with message`() = runTest {
+    val result = suspendCatch {
+      message { "operation failed" }
+      throw RuntimeException("boom")
+    }
+    assertIs<Res.Err.Thrown>(result)
+    assertEquals("operation failed", result.message)
+  }
+
+  @Test
+  fun `top-level suspendCatch message is lazy`() = runTest {
+    var evaluated = false
+    val result = suspendCatch {
+      message { evaluated = true; "should not evaluate" }
+      42
+    }
+    assertIs<Res.Ok<Int>>(result)
+    assertEquals(false, evaluated)
+  }
+
+  @Test
+  fun `top-level suspendCatch uses most recent message`() = runTest {
+    val result = suspendCatch {
+      message { "first" }
+      val step1 = "done"
+      message { "second after $step1" }
+      throw RuntimeException("boom")
+    }
+    assertIs<Res.Err.Thrown>(result)
+    assertEquals("second after done", result.message)
   }
 }
