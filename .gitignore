@@ -1,0 +1,38 @@
+# Build Artifacts
+.gradle/
+.kotlin/
+build/
+*/build/
+out/
+
+# IDE Files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Generated Files
+*.log
+*.class
+*.jar
+*.war
+*.ear
+
+# Gradle wrapper JAR should not be ignored
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local Configuration
+local.properties
+.env
