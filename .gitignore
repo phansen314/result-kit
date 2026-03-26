@@ -36,3 +36,6 @@ desktop.ini
 # Local Configuration
 local.properties
 .env
+
+# Claude Code
+.claude/
