@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class FailMappingRailTest {
 
@@ -16,16 +17,16 @@ class FailMappingRailTest {
     fun `invoke catches exception and maps to error type`() {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRes { throw RuntimeException("boom") }
-        assertIs<Res.Fail<String>>(result)
-        assertEquals("Error: boom", result.error)
+        assertTrue(result.isFail)
+        assertEquals("Error: boom", result.errorOrThrow())
     }
 
     @Test
     fun `invoke returns Ok on success`() {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRes { 42 }
-        assertIs<Res.Ok<Int>>(result)
-        assertEquals(42, result.value)
+        assertTrue(result.isOk)
+        assertEquals(42, result.getOrNull)
     }
 
     @Test
@@ -33,12 +34,12 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
-            val x = Res.Ok(10).orFail()
+            val x = Res.ok(10).orFail()
             ensure(x > 0) { "must be positive" }
             x + 5
         }
-        assertIs<Res.Ok<Int>>(result)
-        assertEquals(15, result.value)
+        assertTrue(result.isOk)
+        assertEquals(15, result.getOrNull)
     }
 
     @Test
@@ -48,8 +49,8 @@ class FailMappingRailTest {
         val result: Res<Int, String> = appRes {
             fail("explicit failure")
         }
-        assertIs<Res.Fail<String>>(result)
-        assertEquals("explicit failure", result.error)
+        assertTrue(result.isFail)
+        assertEquals("explicit failure", result.errorOrThrow())
     }
 
     @Test
@@ -57,11 +58,20 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
-            val x: Int = Res.Fail("not found").orFail()
+            val x: Int = Res.failure("not found").orFail()
             x + 1
         }
-        assertIs<Res.Fail<String>>(result)
-        assertEquals("not found", result.error)
+        assertTrue(result.isFail)
+        assertEquals("not found", result.errorOrThrow())
+    }
+
+    @Test
+    fun `Error propagates through without being caught`() {
+        val error = object : Error("fatal") {}
+        assertFailsWith<Error> {
+            val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+            appRes { throw error }
+        }
     }
 
     @Test
@@ -81,8 +91,8 @@ class FailMappingRailTest {
             delay(1)
             42
         }
-        assertIs<Res.Ok<Int>>(result)
-        assertEquals(42, result.value)
+        assertTrue(result.isOk)
+        assertEquals(42, result.getOrNull)
     }
 
     @Test
@@ -93,14 +103,14 @@ class FailMappingRailTest {
         val r2: Res<Int, String> = appRes { throw IllegalStateException("fail") }
         val r3 = appRes { 3 }
 
-        assertIs<Res.Ok<Int>>(r1)
-        assertEquals(1, r1.value)
+        assertTrue(r1.isOk)
+        assertEquals(1, r1.getOrNull)
 
-        assertIs<Res.Fail<String>>(r2)
-        assertEquals("Error: fail", r2.error)
+        assertTrue(r2.isFail)
+        assertEquals("Error: fail", r2.errorOrThrow())
 
-        assertIs<Res.Ok<Int>>(r3)
-        assertEquals(3, r3.value)
+        assertTrue(r3.isOk)
+        assertEquals(3, r3.getOrNull)
     }
 
     @Test
@@ -108,8 +118,8 @@ class FailMappingRailTest {
         val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
-        assertIs<Res.Fail<String>>(result)
-        assertEquals("Error: boom", result.error)
+        assertTrue(result.isFail)
+        assertEquals("Error: boom", result.errorOrThrow())
     }
 
     // -- member extension invoke (inside res {}, returns V) --
@@ -120,8 +130,8 @@ class FailMappingRailTest {
             val io = failMapping { e -> "Error: ${e.message}" }
             io { throw RuntimeException("boom") }
         }
-        assertIs<Res.Fail<String>>(result)
-        assertEquals("Error: boom", result.error)
+        assertTrue(result.isFail)
+        assertEquals("Error: boom", result.errorOrThrow())
     }
 
     @Test
@@ -131,8 +141,8 @@ class FailMappingRailTest {
             val x: Int = io { 42 }
             x + 1
         }
-        assertIs<Res.Ok<Int>>(result)
-        assertEquals(43, result.value)
+        assertTrue(result.isOk)
+        assertEquals(43, result.getOrNull)
     }
 
     @Test
@@ -143,8 +153,8 @@ class FailMappingRailTest {
             val b: Int = io { 20 }
             a + b
         }
-        assertIs<Res.Ok<Int>>(result)
-        assertEquals(30, result.value)
+        assertTrue(result.isOk)
+        assertEquals(30, result.getOrNull)
     }
 
     @Test
@@ -156,8 +166,29 @@ class FailMappingRailTest {
             @Suppress("UNREACHABLE_CODE")
             a + 1
         }
-        assertIs<Res.Fail<String>>(result)
-        assertEquals("Error: fail at b", result.error)
+        assertTrue(result.isFail)
+        assertEquals("Error: fail at b", result.errorOrThrow())
+    }
+
+    @Test
+    fun `member extension does not map fail calls`() {
+        val result = rail<Int, String> {
+            val io = failMapping { e -> "Mapped: ${e.message}" }
+            io { fail("raw error") }
+        }
+        assertTrue(result.isFail)
+        assertEquals("raw error", result.errorOrThrow())
+    }
+
+    @Test
+    fun `member extension Error propagates through without being caught`() {
+        val error = object : Error("fatal") {}
+        assertFailsWith<Error> {
+            rail<Int, String> {
+                val io = failMapping { e -> "Error: ${e.message}" }
+                io { throw error }
+            }
+        }
     }
 
     @Test
@@ -180,7 +211,35 @@ class FailMappingRailTest {
             }
             x
         }
-        assertIs<Res.Ok<Int>>(result)
-        assertEquals(42, result.value)
+        assertTrue(result.isOk)
+        assertEquals(42, result.getOrNull)
+    }
+
+    // -- ErrorMapperException --
+
+    @Test
+    fun `top-level invoke wraps mapper exception in ErrorMapperException`() {
+        val badMapper = FailMappingRail<String> { throw IllegalStateException("mapper broke") }
+        val ex = assertFailsWith<ErrorMapperException> {
+            badMapper { throw RuntimeException("original") }
+        }
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("mapper broke", ex.cause!!.message)
+        assertIs<RuntimeException>(ex.originalException)
+        assertEquals("original", ex.originalException.message)
+    }
+
+    @Test
+    fun `member extension wraps mapper exception in ErrorMapperException`() {
+        val ex = assertFailsWith<ErrorMapperException> {
+            rail<Int, String> {
+                val io = failMapping { throw IllegalStateException("mapper broke") }
+                io { throw RuntimeException("original") }
+            }
+        }
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("mapper broke", ex.cause!!.message)
+        assertIs<RuntimeException>(ex.originalException)
+        assertEquals("original", ex.originalException.message)
     }
 }
