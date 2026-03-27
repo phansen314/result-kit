@@ -4,7 +4,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class RailTest {
 
@@ -13,14 +13,14 @@ class RailTest {
     @Test
     fun `rail returns Ok on success`() = runTest {
         val result = rail<Int, String> { 42 }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
     @Test
     fun `rail returns Fail on fail`() = runTest {
         val result = rail<Int, String> { fail("failed") }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("failed", result.error)
     }
 
@@ -29,20 +29,20 @@ class RailTest {
     @Test
     fun `orFail unwraps Ok value`() = runTest {
         val result = rail<Int, String> {
-            val x = Res.Ok(10).orFail()
+            val x = ok(10).orFail()
             x + 5
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(15, result.value)
     }
 
     @Test
     fun `orFail short-circuits on Fail`() = runTest {
         val result = rail<Int, String> {
-            val x: Int = Res.Fail("fail").orFail()
+            val x: Int = failure("fail").orFail()
             x + 1
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("fail", result.error)
     }
 
@@ -51,10 +51,10 @@ class RailTest {
     @Test
     fun `orFail with mapError converts error type`() = runTest {
         val result = rail<Int, String> {
-            val x: Int = Res.Fail(404).orFail { code -> "HTTP $code" }
+            val x: Int = failure(404).orFail { code -> "HTTP $code" }
             x + 1
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("HTTP 404", result.error)
     }
 
@@ -66,7 +66,7 @@ class RailTest {
             ensure(true) { "should not happen" }
             42
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
@@ -76,7 +76,7 @@ class RailTest {
             ensure(false) { "validation failed" }
             42
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("validation failed", result.error)
     }
 
@@ -88,7 +88,7 @@ class RailTest {
             val x = ensureNotNull(42) { "was null" }
             x + 1
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(43, result.value)
     }
 
@@ -98,7 +98,7 @@ class RailTest {
             val x = ensureNotNull<Int>(null) { "was null" }
             x + 1
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("was null", result.error)
     }
 
@@ -115,7 +115,7 @@ class RailTest {
             val x = fetchValue().orFail()
             x * 2
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(84, result.value)
     }
 
@@ -130,19 +130,19 @@ class RailTest {
             val x = fetchValue().orFail()
             x * 2
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("remote failure", result.error)
     }
 
     @Test
     fun `chained orFail calls short-circuit on first error`() = runTest {
         val result = rail<Int, String> {
-            val a = Res.Ok(1).orFail()
-            val b: Int = Res.Fail("fail at b").orFail()
+            val a = ok(1).orFail()
+            val b: Int = failure("fail at b").orFail()
             @Suppress("UNREACHABLE_CODE")
             a + b
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("fail at b", result.error)
     }
 
@@ -150,7 +150,7 @@ class RailTest {
 
     private fun syncNonLocalReturn(id: Int): Res<Int, String> {
         val result = rail<Int, String> {
-            if (id < 0) return Res.Fail("negative")
+            if (id < 0) return failure("negative")
             id * 2
         }
         return result
@@ -159,20 +159,20 @@ class RailTest {
     @Test
     fun `non-local return works in sync context - early return`() {
         val result = syncNonLocalReturn(-1)
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("negative", result.error)
     }
 
     @Test
     fun `non-local return works in sync context - normal path`() {
         val result = syncNonLocalReturn(5)
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(10, result.value)
     }
 
     private suspend fun suspendNonLocalReturn(id: Int): Res<Int, String> {
         val result = rail<Int, String> {
-            if (id < 0) return Res.Fail("negative")
+            if (id < 0) return failure("negative")
             delay(1)
             id * 2
         }
@@ -182,21 +182,21 @@ class RailTest {
     @Test
     fun `non-local return works in suspend context - early return`() = runTest {
         val result = suspendNonLocalReturn(-1)
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("negative", result.error)
     }
 
     @Test
     fun `non-local return works in suspend context - normal path`() = runTest {
         val result = suspendNonLocalReturn(5)
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(10, result.value)
     }
 
     private fun failMappingRailNonLocalReturn(id: Int): Res<Int, String> {
         val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRail {
-            if (id < 0) return Res.Fail("negative")
+            if (id < 0) return failure("negative")
             id * 2
         }
         return result
@@ -205,7 +205,7 @@ class RailTest {
     @Test
     fun `non-local return works in FailMappingRail top-level invoke`() {
         val result = failMappingRailNonLocalReturn(-1)
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("negative", result.error)
     }
 

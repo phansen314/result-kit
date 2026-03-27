@@ -17,6 +17,11 @@ package tech.codingzen.resultkit
  *     val user = http { fetchUser(id) }   // returns User directly
  * }
  * ```
+ *
+ * **Note:** The same [FailMappingRail] instance behaves differently depending on context.
+ * Top-level invoke returns `Res<V, E>`; inside `rail {}` the member extension on [Rail] wins
+ * and returns `V` directly (short-circuiting on error). The compiler enforces correct usage —
+ * a return-type mismatch is a compile error.
  */
 class FailMappingRail<E>(
     @PublishedApi internal val mapError: (Exception) -> E
@@ -24,26 +29,29 @@ class FailMappingRail<E>(
 
 /**
  * Pre-built [FailMappingRail] with identity mapping — converts throwing code into
- * `Res<V, Exception>`. Usage: `catching { riskyOperation() }`.
+ * `Res<V, Exception>`. Usage: `attempt { riskyOperation() }`.
  */
-val catching = FailMappingRail<Exception> { e -> e }
+val attempt = FailMappingRail<Exception> { e -> e }
 
 /**
  * Top-level invoke: creates its own [Rail], catches exceptions, returns [Res].
+ *
+ * Inside a [rail] block, the member extension [Rail.invoke] takes precedence and
+ * returns the unwrapped value directly instead.
  */
 inline operator fun <V, E> FailMappingRail<E>.invoke(
     block: Rail<E>.() -> V
 ): Res<V, E> {
     val scope = Rail<E>()
     return try {
-        Res.Ok(scope.block())
+        ok(scope.block())
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
         @Suppress("UNCHECKED_CAST")
-        Res.Fail(e.error as E)
+        failure(e.error as E)
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
     } catch (e: Exception) {
-        Res.Fail(mapError(e))
+        failure(mapError(e))
     }
 }

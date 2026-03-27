@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class FailMappingRailTest {
 
@@ -16,7 +17,7 @@ class FailMappingRailTest {
     fun `invoke catches exception and maps to error type`() {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRes { throw RuntimeException("boom") }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("Error: boom", result.error)
     }
 
@@ -24,7 +25,7 @@ class FailMappingRailTest {
     fun `invoke returns Ok on success`() {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRes { 42 }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
@@ -33,11 +34,11 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
-            val x = Res.Ok(10).orFail()
+            val x = ok(10).orFail()
             ensure(x > 0) { "must be positive" }
             x + 5
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(15, result.value)
     }
 
@@ -48,7 +49,7 @@ class FailMappingRailTest {
         val result: Res<Int, String> = appRes {
             fail("explicit failure")
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("explicit failure", result.error)
     }
 
@@ -57,10 +58,10 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
-            val x: Int = Res.Fail("not found").orFail()
+            val x: Int = failure("not found").orFail()
             x + 1
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("not found", result.error)
     }
 
@@ -81,7 +82,7 @@ class FailMappingRailTest {
             delay(1)
             42
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
@@ -93,13 +94,13 @@ class FailMappingRailTest {
         val r2: Res<Int, String> = appRes { throw IllegalStateException("fail") }
         val r3 = appRes { 3 }
 
-        assertIs<Res.Ok<Int>>(r1)
+        assertTrue(r1.isOk)
         assertEquals(1, r1.value)
 
-        assertIs<Res.Fail<String>>(r2)
+        assertTrue(r2.isFail)
         assertEquals("Error: fail", r2.error)
 
-        assertIs<Res.Ok<Int>>(r3)
+        assertTrue(r3.isOk)
         assertEquals(3, r3.value)
     }
 
@@ -108,7 +109,7 @@ class FailMappingRailTest {
         val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("Error: boom", result.error)
     }
 
@@ -120,7 +121,7 @@ class FailMappingRailTest {
             val io = failMapping { e -> "Error: ${e.message}" }
             io { throw RuntimeException("boom") }
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("Error: boom", result.error)
     }
 
@@ -131,7 +132,7 @@ class FailMappingRailTest {
             val x: Int = io { 42 }
             x + 1
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(43, result.value)
     }
 
@@ -143,7 +144,7 @@ class FailMappingRailTest {
             val b: Int = io { 20 }
             a + b
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(30, result.value)
     }
 
@@ -156,7 +157,7 @@ class FailMappingRailTest {
             @Suppress("UNREACHABLE_CODE")
             a + 1
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("Error: fail at b", result.error)
     }
 
@@ -180,7 +181,7 @@ class FailMappingRailTest {
             }
             x
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 }

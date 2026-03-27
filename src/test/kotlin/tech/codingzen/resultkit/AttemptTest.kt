@@ -7,38 +7,39 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
-class CatchingTest {
+class AttemptTest {
 
     @Test
-    fun `catching returns Ok on success`() {
-        val result = catching { 42 }
-        assertIs<Res.Ok<Int>>(result)
+    fun `attempt returns Ok on success`() {
+        val result = attempt { 42 }
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
     @Test
-    fun `catching wraps exception in Fail`() {
-        val result = catching { throw RuntimeException("boom") }
-        assertIs<Res.Fail<Exception>>(result)
+    fun `attempt wraps exception in Fail`() {
+        val result = attempt { throw RuntimeException("boom") }
+        assertTrue(result.isFail)
         assertIs<RuntimeException>(result.error)
         assertEquals("boom", result.error.message)
     }
 
     @Test
-    fun `catching rethrows CancellationException`() {
+    fun `attempt rethrows CancellationException`() {
         assertFailsWith<CancellationException> {
-            catching { throw CancellationException("cancelled") }
+            attempt { throw CancellationException("cancelled") }
         }
     }
 
     @Test
-    fun `catching works with suspend lambdas`() = runTest {
-        val result = catching {
+    fun `attempt works with suspend lambdas`() = runTest {
+        val result = attempt {
             delay(1)
             42
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 }

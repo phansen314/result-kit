@@ -13,15 +13,23 @@ class Rail<E> @PublishedApi internal constructor() {
         throw FailException(e as Any?, this)
     }
 
-    fun <V> Res<V, E>.orFail(): V = when (this) {
-        is Res.Ok -> value
-        is Res.Fail -> fail(error)
-    }
+    fun <V> Res<V, E>.orFail(): V =
+        if (inlineValue is Failure) {
+            @Suppress("UNCHECKED_CAST")
+            fail(inlineValue.error as E)
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            inlineValue as V
+        }
 
-    inline fun <V, F> Res<V, F>.orFail(mapError: (F) -> E): V = when (this) {
-        is Res.Ok -> value
-        is Res.Fail -> fail(mapError(error))
-    }
+    inline fun <V, F> Res<V, F>.orFail(mapError: (F) -> E): V =
+        if (inlineValue is Failure) {
+            @Suppress("UNCHECKED_CAST")
+            fail(mapError(inlineValue.error as F))
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            inlineValue as V
+        }
 
     inline fun ensure(condition: Boolean, error: () -> E) {
         if (!condition) fail(error())

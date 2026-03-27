@@ -1,60 +1,130 @@
 package tech.codingzen.resultkit
 
-sealed class Res<out V, out E> {
-    class Ok<V> @PublishedApi internal constructor(val value: V) : Res<V, Nothing>() {
-        override fun equals(other: Any?) = other is Ok<*> && other.value == value
-        override fun hashCode() = value.hashCode()
-        override fun toString() = "Ok($value)"
-    }
-
-    class Fail<E> @PublishedApi internal constructor(val error: E) : Res<Nothing, E>() {
-        override fun equals(other: Any?) = other is Fail<*> && other.error == error
-        override fun hashCode() = error.hashCode()
-        override fun toString() = "Fail($error)"
-    }
-
-    inline fun <T> fold(onOk: (V) -> T, onFail: (E) -> T): T = when (this) {
-        is Ok -> onOk(value)
-        is Fail -> onFail(error)
-    }
+@PublishedApi
+internal class Failure(@JvmField val error: Any?) {
+    override fun equals(other: Any?) = other is Failure && other.error == error
+    override fun hashCode() = error.hashCode()
+    override fun toString() = "Fail($error)"
 }
 
-inline fun <V, E, U> Res<V, E>.map(transform: (V) -> U): Res<U, E> = when (this) {
-    is Res.Ok -> Res.Ok(transform(value))
-    is Res.Fail -> this
+@JvmInline
+value class Res<out V, out E> @PublishedApi internal constructor(
+    @PublishedApi internal val inlineValue: Any?
+) {
+    val isOk: Boolean get() = inlineValue !is Failure
+    val isFail: Boolean get() = inlineValue is Failure
+
+    inline fun <T> fold(onOk: (V) -> T, onFail: (E) -> T): T =
+        if (inlineValue is Failure) {
+            @Suppress("UNCHECKED_CAST")
+            onFail(inlineValue.error as E)
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            onOk(inlineValue as V)
+        }
+
+    override fun toString(): String =
+        if (inlineValue is Failure) "Fail(${inlineValue.error})" else "Ok($inlineValue)"
 }
 
-inline fun <V, E, F> Res<V, E>.mapError(transform: (E) -> F): Res<V, F> = when (this) {
-    is Res.Ok -> this
-    is Res.Fail -> Res.Fail(transform(error))
-}
+val <V, E> Res<V, E>.value: V
+    get() {
+        check(isOk) { "Called value on a Fail: $this" }
+        @Suppress("UNCHECKED_CAST")
+        return inlineValue as V
+    }
+
+val <V, E> Res<V, E>.error: E
+    get() {
+        check(isFail) { "Called error on an Ok: $this" }
+        @Suppress("UNCHECKED_CAST")
+        return (inlineValue as Failure).error as E
+    }
+
+val <V, E> Res<V, E>.valueOrNull: V?
+    get() = if (inlineValue is Failure) null else {
+        @Suppress("UNCHECKED_CAST")
+        inlineValue as V
+    }
+
+val <V, E> Res<V, E>.errorOrNull: E?
+    get() = if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        (inlineValue as Failure).error as E
+    } else null
+
+inline fun <V, E, U> Res<V, E>.map(transform: (V) -> U): Res<U, E> =
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        Res(inlineValue)
+    } else {
+        @Suppress("UNCHECKED_CAST")
+        Res(transform(inlineValue as V))
+    }
+
+inline fun <V, E, F> Res<V, E>.mapError(transform: (E) -> F): Res<V, F> =
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        Res(Failure(transform(inlineValue.error as E)))
+    } else {
+        @Suppress("UNCHECKED_CAST")
+        Res(inlineValue)
+    }
+
+// @UnsafeVariance is safe here: the lambda produces a V, it doesn't consume a covariant V in recover
+inline fun <V, E> Res<V, E>.recover(transform: (E) -> @UnsafeVariance V): Res<V, Nothing> =
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        Res(transform(inlineValue.error as E))
+    } else {
+        @Suppress("UNCHECKED_CAST")
+        Res(inlineValue)
+    }
 
 // @UnsafeVariance is safe here: the lambda produces a V, it doesn't consume a covariant V
-inline fun <V, E> Res<V, E>.getOrElse(default: (E) -> @UnsafeVariance V): V = when (this) {
-    is Res.Ok -> value
-    is Res.Fail -> default(error)
-}
+inline fun <V, E> Res<V, E>.getOrElse(default: (E) -> @UnsafeVariance V): V =
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        default(inlineValue.error as E)
+    } else {
+        @Suppress("UNCHECKED_CAST")
+        inlineValue as V
+    }
 
 inline fun <V, E> Res<V, E>.onOk(action: (V) -> Unit): Res<V, E> {
-    if (this is Res.Ok) action(value)
+    if (inlineValue !is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        action(inlineValue as V)
+    }
     return this
 }
 
 inline fun <V, E> Res<V, E>.onFail(action: (E) -> Unit): Res<V, E> {
-    if (this is Res.Fail) action(error)
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        action(inlineValue.error as E)
+    }
     return this
 }
 
-fun <V, E : Throwable> Res<V, E>.getOrThrow(): V = when (this) {
-    is Res.Ok -> value
-    is Res.Fail -> throw error
-}
+fun <V, E : Throwable> Res<V, E>.getOrThrow(): V =
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        throw inlineValue.error as E
+    } else {
+        @Suppress("UNCHECKED_CAST")
+        inlineValue as V
+    }
 
-inline fun <V, E> Res<V, E>.getOrThrow(transform: (E) -> Throwable): V = when (this) {
-    is Res.Ok -> value
-    is Res.Fail -> throw transform(error)
-}
+inline fun <V, E> Res<V, E>.getOrThrow(transform: (E) -> Throwable): V =
+    if (inlineValue is Failure) {
+        @Suppress("UNCHECKED_CAST")
+        throw transform(inlineValue.error as E)
+    } else {
+        @Suppress("UNCHECKED_CAST")
+        inlineValue as V
+    }
 
-fun <V> ok(value: V): Res<V, Nothing> = Res.Ok(value)
+fun <V> ok(value: V): Res<V, Nothing> = Res(value)
 
-fun <E> failure(error: E): Res<Nothing, E> = Res.Fail(error)
+fun <E> failure(error: E): Res<Nothing, E> = Res(Failure(error))

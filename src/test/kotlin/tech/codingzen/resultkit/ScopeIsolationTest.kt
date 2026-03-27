@@ -5,7 +5,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class ScopeIsolationTest {
 
@@ -15,11 +15,11 @@ class ScopeIsolationTest {
     fun `inner rail fail does not leak to outer rail`() {
         val result = rail<Int, String> {
             val inner = rail<Int, String> { fail("inner") }
-            assertIs<Res.Fail<String>>(inner)
+            assertTrue(inner.isFail)
             assertEquals("inner", inner.error)
             42
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
@@ -29,7 +29,7 @@ class ScopeIsolationTest {
             val inner = rail<Int, String> { fail("inner") }
             inner.orFail()
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("inner", result.error)
     }
 
@@ -39,7 +39,7 @@ class ScopeIsolationTest {
             val inner = rail<Int, String> { 10 }
             inner.orFail() + 5
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(15, result.value)
     }
 
@@ -49,7 +49,7 @@ class ScopeIsolationTest {
     fun `FailMappingRail top-level invoke captures fail as Res Fail`() {
         val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRail { fail("inner") }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("inner", result.error)
     }
 
@@ -57,7 +57,7 @@ class ScopeIsolationTest {
     fun `FailMappingRail top-level invoke captures exception as Res Fail`() {
         val appRail = FailMappingRail<String> { e -> "Caught: ${e.message}" }
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("Caught: boom", result.error)
     }
 
@@ -70,7 +70,7 @@ class ScopeIsolationTest {
             // member extension wins — fail() short-circuits outer rail
             appRail { fail("inner") }
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("inner", result.error)
     }
 
@@ -81,7 +81,7 @@ class ScopeIsolationTest {
             // member extension wins — exception mapped and short-circuits outer rail
             appRail { throw RuntimeException("boom") }
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("Caught: boom", result.error)
     }
 
@@ -93,7 +93,7 @@ class ScopeIsolationTest {
             val io = failMapping { e -> "IO: ${e.message}" }
             io { throw RuntimeException("disk fail") }
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("IO: disk fail", result.error)
     }
 
@@ -104,7 +104,7 @@ class ScopeIsolationTest {
             val x = io { 10 }
             x + 5
         }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(15, result.value)
     }
 
@@ -116,7 +116,7 @@ class ScopeIsolationTest {
             val inner = rail<Int, String> { fail("inner") }
             inner.orFail()
         }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("inner", result.error)
     }
 

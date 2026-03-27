@@ -3,8 +3,6 @@ package tech.codingzen.resultkit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 
@@ -15,14 +13,14 @@ class ResTest {
     @Test
     fun `ok creates Ok`() {
         val result = ok(42)
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
     }
 
     @Test
     fun `failure creates Fail`() {
         val result = failure("err")
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("err", result.error)
     }
 
@@ -45,7 +43,7 @@ class ResTest {
     @Test
     fun `map transforms Ok value`() {
         val result = ok(5).map { it * 3 }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(15, result.value)
     }
 
@@ -53,9 +51,9 @@ class ResTest {
     fun `map passes through Fail`() {
         val original = failure("err")
         val result = original.map { 42 }
-        assertIs<Res.Fail<String>>(result)
+        assertTrue(result.isFail)
         assertEquals("err", result.error)
-        assertSame(original, result)
+        assertEquals(original, result)
     }
 
     // -- mapError --
@@ -63,7 +61,7 @@ class ResTest {
     @Test
     fun `mapError transforms Fail error`() {
         val result = failure("err").mapError { it.length }
-        assertIs<Res.Fail<Int>>(result)
+        assertTrue(result.isFail)
         assertEquals(3, result.error)
     }
 
@@ -71,9 +69,9 @@ class ResTest {
     fun `mapError passes through Ok`() {
         val original = ok(42)
         val result = original.mapError { "mapped" }
-        assertIs<Res.Ok<Int>>(result)
+        assertTrue(result.isOk)
         assertEquals(42, result.value)
-        assertSame(original, result)
+        assertEquals(original, result)
     }
 
     // -- getOrElse --
@@ -98,7 +96,7 @@ class ResTest {
         val original = ok(42)
         val result = original.onOk { called = true }
         assertTrue(called)
-        assertSame(original, result)
+        assertEquals(original, result)
     }
 
     @Test
@@ -107,7 +105,7 @@ class ResTest {
         val original = failure("err")
         val result = original.onOk { called = true }
         assertFalse(called)
-        assertSame(original, result)
+        assertEquals(original, result)
     }
 
     // -- onFail --
@@ -118,7 +116,7 @@ class ResTest {
         val original = failure("err")
         val result = original.onFail { called = true }
         assertTrue(called)
-        assertSame(original, result)
+        assertEquals(original, result)
     }
 
     @Test
@@ -127,7 +125,7 @@ class ResTest {
         val original = ok(42)
         val result = original.onFail { called = true }
         assertFalse(called)
-        assertSame(original, result)
+        assertEquals(original, result)
     }
 
     // -- getOrThrow --
@@ -160,6 +158,77 @@ class ResTest {
             result.getOrThrow { IllegalStateException(it) }
         }
         assertEquals("err", ex.message)
+    }
+
+    // -- valueOrNull / errorOrNull --
+
+    @Test
+    fun `valueOrNull returns value for Ok`() {
+        assertEquals(42, ok(42).valueOrNull)
+    }
+
+    @Test
+    fun `valueOrNull returns null for Fail`() {
+        assertEquals(null, failure("err").valueOrNull)
+    }
+
+    @Test
+    fun `errorOrNull returns error for Fail`() {
+        assertEquals("err", failure("err").errorOrNull)
+    }
+
+    @Test
+    fun `errorOrNull returns null for Ok`() {
+        assertEquals(null, ok(42).errorOrNull)
+    }
+
+    // -- recover --
+
+    @Test
+    fun `recover transforms Fail to Ok`() {
+        val result = failure("err").recover { it.length }
+        assertTrue(result.isOk)
+        assertEquals(3, result.value)
+    }
+
+    @Test
+    fun `recover passes through Ok`() {
+        val result = ok(42).recover { -1 }
+        assertTrue(result.isOk)
+        assertEquals(42, result.value)
+    }
+
+    // -- null edge cases (tagged union invariants) --
+
+    @Test
+    fun `ok null is Ok`() {
+        val result = ok(null)
+        assertTrue(result.isOk)
+        assertFalse(result.isFail)
+        assertEquals(null, result.value)
+    }
+
+    @Test
+    fun `failure null is Fail`() {
+        val result = failure(null)
+        assertTrue(result.isFail)
+        assertFalse(result.isOk)
+        assertEquals(null, result.error)
+    }
+
+    @Test
+    fun `ok null not equal to failure null`() {
+        assertFalse(ok(null).equals(failure(null)))
+    }
+
+    @Test
+    fun `ok null toString`() {
+        assertEquals("Ok(null)", ok(null).toString())
+    }
+
+    @Test
+    fun `failure null toString`() {
+        assertEquals("Fail(null)", failure(null).toString())
     }
 
     // -- equals / hashCode / toString --
