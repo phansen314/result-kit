@@ -28,12 +28,6 @@ class FailMappingRail<E>(
 )
 
 /**
- * Pre-built [FailMappingRail] with identity mapping — converts throwing code into
- * `Res<V, Exception>`. Usage: `attempt { riskyOperation() }`.
- */
-val attempt = FailMappingRail<Exception> { e -> e }
-
-/**
  * Top-level invoke: creates its own [Rail], catches exceptions, returns [Res].
  *
  * Inside a [rail] block, the member extension [Rail.invoke] takes precedence and
@@ -44,14 +38,18 @@ inline operator fun <V, E> FailMappingRail<E>.invoke(
 ): Res<V, E> {
     val scope = Rail<E>()
     return try {
-        ok(scope.block())
+        Res.ok(scope.block())
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
         @Suppress("UNCHECKED_CAST")
-        failure(e.error as E)
+        Res.failure(e.error as E)
+    // CancellationException is a subtype of Exception on JVM — must be caught first to preserve structured concurrency
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
     } catch (e: Exception) {
-        failure(mapError(e))
+        try { Res.failure(mapError(e)) } catch (me: Exception) {
+            if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+            throw ErrorMapperException(e, me)
+        }
     }
 }

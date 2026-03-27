@@ -16,11 +16,11 @@ class ScopeIsolationTest {
         val result = rail<Int, String> {
             val inner = rail<Int, String> { fail("inner") }
             assertTrue(inner.isFail)
-            assertEquals("inner", inner.error)
+            assertEquals("inner", inner.errorOrThrow())
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.value)
+        assertEquals(42, result.getOrNull)
     }
 
     @Test
@@ -30,7 +30,7 @@ class ScopeIsolationTest {
             inner.orFail()
         }
         assertTrue(result.isFail)
-        assertEquals("inner", result.error)
+        assertEquals("inner", result.errorOrThrow())
     }
 
     @Test
@@ -40,7 +40,7 @@ class ScopeIsolationTest {
             inner.orFail() + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.value)
+        assertEquals(15, result.getOrNull)
     }
 
     // -- FailMappingRail top-level invoke (outside rail {}) --
@@ -50,7 +50,7 @@ class ScopeIsolationTest {
         val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRail { fail("inner") }
         assertTrue(result.isFail)
-        assertEquals("inner", result.error)
+        assertEquals("inner", result.errorOrThrow())
     }
 
     @Test
@@ -58,7 +58,7 @@ class ScopeIsolationTest {
         val appRail = FailMappingRail<String> { e -> "Caught: ${e.message}" }
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
         assertTrue(result.isFail)
-        assertEquals("Caught: boom", result.error)
+        assertEquals("Caught: boom", result.errorOrThrow())
     }
 
     // -- FailMappingRail inside rail {} uses member extension (short-circuits outer) --
@@ -71,7 +71,7 @@ class ScopeIsolationTest {
             appRail { fail("inner") }
         }
         assertTrue(result.isFail)
-        assertEquals("inner", result.error)
+        assertEquals("inner", result.errorOrThrow())
     }
 
     @Test
@@ -82,7 +82,7 @@ class ScopeIsolationTest {
             appRail { throw RuntimeException("boom") }
         }
         assertTrue(result.isFail)
-        assertEquals("Caught: boom", result.error)
+        assertEquals("Caught: boom", result.errorOrThrow())
     }
 
     // -- nested FailMappingRail member extension invoke --
@@ -94,7 +94,7 @@ class ScopeIsolationTest {
             io { throw RuntimeException("disk fail") }
         }
         assertTrue(result.isFail)
-        assertEquals("IO: disk fail", result.error)
+        assertEquals("IO: disk fail", result.errorOrThrow())
     }
 
     @Test
@@ -105,7 +105,7 @@ class ScopeIsolationTest {
             x + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.value)
+        assertEquals(15, result.getOrNull)
     }
 
     // -- suspend context --
@@ -117,7 +117,7 @@ class ScopeIsolationTest {
             inner.orFail()
         }
         assertTrue(result.isFail)
-        assertEquals("inner", result.error)
+        assertEquals("inner", result.errorOrThrow())
     }
 
     // -- CancellationException passes through all scopes --
@@ -132,6 +132,30 @@ class ScopeIsolationTest {
                 42
             }
         }
+    }
+
+    // -- cross-scope error type isolation --
+
+    @Test
+    fun `nested rail with different error types isolates scopes`() {
+        val result = rail<Int, String> {
+            val inner: Res<Int, Int> = rail<Int, Int> { fail(404) }
+            inner.orFail { code -> "HTTP $code" }
+        }
+        assertTrue(result.isFail)
+        assertEquals("HTTP 404", result.errorOrThrow())
+    }
+
+    @Test
+    fun `FailMappingRail top-level invoke nested inside rail isolates scopes`() {
+        val appRail = FailMappingRail<Int> { e -> e.message?.length ?: 0 }
+        val result = rail<Int, String> {
+            val inner: Res<Int, Int> = appRail { fail(99) }
+            // inner rail's fail(99) is caught by appRail's scope, not the outer rail
+            inner.orFail { code -> "code: $code" }
+        }
+        assertTrue(result.isFail)
+        assertEquals("code: 99", result.errorOrThrow())
     }
 
     @Test

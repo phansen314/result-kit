@@ -18,7 +18,7 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRes { throw RuntimeException("boom") }
         assertTrue(result.isFail)
-        assertEquals("Error: boom", result.error)
+        assertEquals("Error: boom", result.errorOrThrow())
     }
 
     @Test
@@ -26,7 +26,7 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRes { 42 }
         assertTrue(result.isOk)
-        assertEquals(42, result.value)
+        assertEquals(42, result.getOrNull)
     }
 
     @Test
@@ -34,12 +34,12 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
-            val x = ok(10).orFail()
+            val x = Res.ok(10).orFail()
             ensure(x > 0) { "must be positive" }
             x + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.value)
+        assertEquals(15, result.getOrNull)
     }
 
     @Test
@@ -50,7 +50,7 @@ class FailMappingRailTest {
             fail("explicit failure")
         }
         assertTrue(result.isFail)
-        assertEquals("explicit failure", result.error)
+        assertEquals("explicit failure", result.errorOrThrow())
     }
 
     @Test
@@ -58,11 +58,20 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
-            val x: Int = failure("not found").orFail()
+            val x: Int = Res.failure("not found").orFail()
             x + 1
         }
         assertTrue(result.isFail)
-        assertEquals("not found", result.error)
+        assertEquals("not found", result.errorOrThrow())
+    }
+
+    @Test
+    fun `Error propagates through without being caught`() {
+        val error = object : Error("fatal") {}
+        assertFailsWith<Error> {
+            val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+            appRes { throw error }
+        }
     }
 
     @Test
@@ -83,7 +92,7 @@ class FailMappingRailTest {
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.value)
+        assertEquals(42, result.getOrNull)
     }
 
     @Test
@@ -95,13 +104,13 @@ class FailMappingRailTest {
         val r3 = appRes { 3 }
 
         assertTrue(r1.isOk)
-        assertEquals(1, r1.value)
+        assertEquals(1, r1.getOrNull)
 
         assertTrue(r2.isFail)
-        assertEquals("Error: fail", r2.error)
+        assertEquals("Error: fail", r2.errorOrThrow())
 
         assertTrue(r3.isOk)
-        assertEquals(3, r3.value)
+        assertEquals(3, r3.getOrNull)
     }
 
     @Test
@@ -110,7 +119,7 @@ class FailMappingRailTest {
 
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
         assertTrue(result.isFail)
-        assertEquals("Error: boom", result.error)
+        assertEquals("Error: boom", result.errorOrThrow())
     }
 
     // -- member extension invoke (inside res {}, returns V) --
@@ -122,7 +131,7 @@ class FailMappingRailTest {
             io { throw RuntimeException("boom") }
         }
         assertTrue(result.isFail)
-        assertEquals("Error: boom", result.error)
+        assertEquals("Error: boom", result.errorOrThrow())
     }
 
     @Test
@@ -133,7 +142,7 @@ class FailMappingRailTest {
             x + 1
         }
         assertTrue(result.isOk)
-        assertEquals(43, result.value)
+        assertEquals(43, result.getOrNull)
     }
 
     @Test
@@ -145,7 +154,7 @@ class FailMappingRailTest {
             a + b
         }
         assertTrue(result.isOk)
-        assertEquals(30, result.value)
+        assertEquals(30, result.getOrNull)
     }
 
     @Test
@@ -158,7 +167,28 @@ class FailMappingRailTest {
             a + 1
         }
         assertTrue(result.isFail)
-        assertEquals("Error: fail at b", result.error)
+        assertEquals("Error: fail at b", result.errorOrThrow())
+    }
+
+    @Test
+    fun `member extension does not map fail calls`() {
+        val result = rail<Int, String> {
+            val io = failMapping { e -> "Mapped: ${e.message}" }
+            io { fail("raw error") }
+        }
+        assertTrue(result.isFail)
+        assertEquals("raw error", result.errorOrThrow())
+    }
+
+    @Test
+    fun `member extension Error propagates through without being caught`() {
+        val error = object : Error("fatal") {}
+        assertFailsWith<Error> {
+            rail<Int, String> {
+                val io = failMapping { e -> "Error: ${e.message}" }
+                io { throw error }
+            }
+        }
     }
 
     @Test
@@ -182,6 +212,34 @@ class FailMappingRailTest {
             x
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.value)
+        assertEquals(42, result.getOrNull)
+    }
+
+    // -- ErrorMapperException --
+
+    @Test
+    fun `top-level invoke wraps mapper exception in ErrorMapperException`() {
+        val badMapper = FailMappingRail<String> { throw IllegalStateException("mapper broke") }
+        val ex = assertFailsWith<ErrorMapperException> {
+            badMapper { throw RuntimeException("original") }
+        }
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("mapper broke", ex.cause!!.message)
+        assertIs<RuntimeException>(ex.originalException)
+        assertEquals("original", ex.originalException.message)
+    }
+
+    @Test
+    fun `member extension wraps mapper exception in ErrorMapperException`() {
+        val ex = assertFailsWith<ErrorMapperException> {
+            rail<Int, String> {
+                val io = failMapping { throw IllegalStateException("mapper broke") }
+                io { throw RuntimeException("original") }
+            }
+        }
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("mapper broke", ex.cause!!.message)
+        assertIs<RuntimeException>(ex.originalException)
+        assertEquals("original", ex.originalException.message)
     }
 }

@@ -6,17 +6,21 @@ package tech.codingzen.resultkit
  * Executes [block] within a [Rail] and returns an Ok result on success or a Fail result on
  * short-circuit via [Rail.fail], [Rail.orFail], or [Rail.ensure].
  *
- * **Warning:** Do not use raw `try { } catch(e: Exception)` or `catch(e: Throwable)` inside
- * the block. The DSL uses an internal exception for control flow, and a broad catch will
- * silently swallow it, breaking the railway. Use [Rail.failMapping]`{ }` instead.
+ * **Warning:** Do not use raw `try { } catch(e: Throwable)` inside the block. The DSL uses
+ * an internal exception (`FailException`, a direct [Throwable] subclass) for control flow,
+ * and `catch(Throwable)` will silently swallow it, breaking the railway.
+ *
+ * Also avoid `catch(e: Exception)` inside [Rail.failMapping]`{ }` blocks — it will intercept
+ * exceptions before the mapping can catch and translate them.
  */
 inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E> {
     val scope = Rail<E>()
     return try {
-        ok(scope.block())
+        Res.ok(scope.block())
+    // No CancellationException guard needed — we only catch FailException (a Throwable, not Exception)
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
         @Suppress("UNCHECKED_CAST")
-        failure(e.error as E)
+        Res.failure(e.error as E)
     }
 }

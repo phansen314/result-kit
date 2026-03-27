@@ -13,33 +13,33 @@ class AttemptTest {
 
     @Test
     fun `attempt returns Ok on success`() {
-        val result = attempt { 42 }
+        val result = Rail.attempt { 42 }
         assertTrue(result.isOk)
-        assertEquals(42, result.value)
+        assertEquals(42, result.getOrNull)
     }
 
     @Test
     fun `attempt wraps exception in Fail`() {
-        val result = attempt { throw RuntimeException("boom") }
+        val result = Rail.attempt { throw RuntimeException("boom") }
         assertTrue(result.isFail)
-        assertIs<RuntimeException>(result.error)
-        assertEquals("boom", result.error.message)
+        assertIs<RuntimeException>(result.errorOrThrow())
+        assertEquals("boom", result.errorOrThrow().message)
     }
 
     @Test
     fun `attempt rethrows CancellationException`() {
         assertFailsWith<CancellationException> {
-            attempt { throw CancellationException("cancelled") }
+            Rail.attempt { throw CancellationException("cancelled") }
         }
     }
 
     @Test
     fun `attempt works with suspend lambdas`() = runTest {
-        val result = attempt {
+        val result = Rail.attempt {
             delay(1)
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.value)
+        assertEquals(42, result.getOrNull)
     }
 }

@@ -4,18 +4,21 @@ Functional error handling library for Kotlin using Railway-Oriented Programming.
 
 ## Critical: Do not use raw try/catch inside rail {} blocks
 
-The DSL uses an internal `FailException` (extends `Throwable`) for control flow. A raw `catch(e: Exception)` or `catch(e: Throwable)` inside `rail {}` will silently swallow it, breaking the railway with no visible error.
+The DSL uses an internal `FailException` (a direct `Throwable` subclass, **not** an `Exception`) for control flow.
+
+- `catch(e: Throwable)` inside `rail {}` will silently swallow `FailException`, breaking the railway
+- `catch(e: Exception)` inside `failMapping { } { }` blocks will intercept exceptions before the mapping can catch and translate them
 
 ```kotlin
 // NEVER do this inside rail {}
 try {
     someResult.orFail()
-} catch (e: Exception) { // swallows FailException!
+} catch (e: Throwable) { // swallows FailException!
     fallback
 }
 
-// Use attempt {} instead
-attempt { riskyOperation() }
+// Use Rail.attempt {} instead
+Rail.attempt { riskyOperation() }
 
 // Or failMapping {} { block } for error mapping
 val http = failMapping { e -> "HTTP error: ${e.message}" }
@@ -30,17 +33,18 @@ http { fetchUser(id) }
 - `orFail { mapError }` — unwrap with error type conversion
 - `ensure(condition) { error }` — validate or short-circuit
 - `ensureNotNull(value) { error }` — null-check or short-circuit
-- `attempt { block }` — top-level convenience, returns `Res<V, Exception>`
+- `Rail.attempt { block }` — companion factory, returns `Res<V, Exception>`
 - `failMapping { e -> myError }` — inside `rail {}`, creates `FailMappingRail<E>`. Invoke with a block: `io { riskyOp() }` — returns `V` directly, short-circuits on exception. Reusable across multiple calls
 - `FailMappingRail { e -> myError }` — top-level factory returning `FailMappingRail<E>`. Invoke with a block: `appRail { block }` — returns `Res<V, E>`. Combines full `Rail` DSL with automatic exception catching
 
 ## Res properties
 
 - `isOk` / `isFail` — check variant without unwrapping
-- `value` — extension property, returns Ok value or throws `IllegalStateException`
-- `error` — extension property, returns Fail error or throws `IllegalStateException`
-- `valueOrNull` — extension property, returns Ok value or `null`
-- `errorOrNull` — extension property, returns Fail error or `null`
+- `getOrNull` — property, returns Ok value or `null`
+- `errorOrNull` — property, returns Fail error or `null`
+- `getOrThrow()` — function, returns Ok value or throws error (requires `E : Throwable`)
+- `getOrThrow { transform }` — function, returns Ok value or throws `transform(error)`
+- `errorOrThrow()` — function, returns Fail error or throws `IllegalStateException`
 - `recover { transform }` — convert Fail to Ok; passes through Ok unchanged
 - Use `fold()` for exhaustive handling (no `when` pattern matching — `Res` is a value class, not sealed)
 

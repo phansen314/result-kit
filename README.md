@@ -47,10 +47,11 @@ fun getUserName(id: Int): Res<String, String> = rail {
 }
 
 // Usage
-when (val result = getUserName(123)) {
-    is Res.Ok -> println("User: ${result.value}")
-    is Res.Fail -> println("Error: ${result.error}")
-}
+val result = getUserName(123)
+result.fold(
+    onOk = { println("User: $it") },
+    onFail = { println("Error: $it") }
+)
 ```
 
 ### Short-Circuit with orFail
