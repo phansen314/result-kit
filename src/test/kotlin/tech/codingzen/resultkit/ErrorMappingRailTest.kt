@@ -159,6 +159,51 @@ class ErrorMappingRailTest {
         assertEquals("User-1", result.getOrNull())
     }
 
+    // -- orFail with ErrorMappingRail: inside rail {} --
+
+    @Test
+    fun `orFail with ErrorMappingRail unwraps Ok value`() {
+        val result = rail<Int, String> {
+            val http = errorMapping<Int> { code -> "HTTP $code" }
+            Res.ok(42).orFail(http)
+        }
+        assertEquals(42, result.getOrNull())
+    }
+
+    @Test
+    fun `orFail with ErrorMappingRail maps error and short-circuits`() {
+        val result = rail<Int, String> {
+            val http = errorMapping<Int> { code -> "HTTP $code" }
+            Res.failure(404).orFail(http)
+            @Suppress("UNREACHABLE_CODE")
+            999
+        }
+        assertTrue(result.isFail)
+        assertEquals("HTTP 404", result.errorOrThrow())
+    }
+
+    @Test
+    fun `orFail with ErrorMappingRail is reusable across multiple calls`() {
+        val result = rail<Int, String> {
+            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val a = Res.ok(10).orFail(http)
+            val b = Res.ok(20).orFail(http)
+            a + b
+        }
+        assertEquals(30, result.getOrNull())
+    }
+
+    @Test
+    fun `orFail with ErrorMappingRail works alongside orFail with inline lambda`() {
+        val result = rail<Int, String> {
+            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val a = Res.ok(10).orFail(http)
+            val b: Int = Res.ok(20).orFail { n -> "Direct: $n" }
+            a + b
+        }
+        assertEquals(30, result.getOrNull())
+    }
+
     // -- Top-level invoke: outside rail {} --
 
     @Test

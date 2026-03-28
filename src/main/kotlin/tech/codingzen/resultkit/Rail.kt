@@ -32,6 +32,15 @@ public class Rail<E> @PublishedApi internal constructor() {
         if (inlineValue is Failure) fail(mapError(inlineValue.error as F))
         else inlineValue as V
 
+    /**
+     * Unwraps the Ok value, or maps the error via [mapping] and short-circuits this rail.
+     *
+     * Equivalent to `orFail { mapping.mapError(it) }` but allows reusing an [ErrorMappingRail]
+     * across multiple call sites.
+     */
+    public inline fun <V, F> Res<V, F>.orFail(mapping: ErrorMappingRail<F, @UnsafeVariance E>): V =
+        orFail { mapping.mapError(it) }
+
     /** Short-circuits this rail with [error] if [condition] is `false`. Analogous to [require]. */
     public inline fun ensure(condition: Boolean, error: () -> E) {
         if (!condition) fail(error())

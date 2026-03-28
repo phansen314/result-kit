@@ -1,19 +1,25 @@
 # Result-Kit
 
-A functional error handling library for Kotlin with Railway-Oriented Programming support. Provides `Res<V, E>`, a zero-allocation inline value class for typed errors, and the `rail {}` DSL for composing operations that can fail with short-circuit semantics.
+Functional error handling for Kotlin. A `Res<V, E>` type and a `rail {}` DSL that lets you write straight-line code where errors short-circuit automatically — no exception swallowing, no nested `when` branches, no runtime dependencies.
 
-## Overview
+```kotlin
+// Without Result-Kit — nullable return, error details lost
+fun processOrder(orderId: Int): Order? {
+    val order = fetchOrder(orderId) ?: return null
+    val validated = validateOrder(order) ?: return null
+    val saved = saveOrder(validated) ?: return null
+    return saved
+}
 
-Result-Kit brings Railway-Oriented Programming to Kotlin, allowing you to compose operations that can fail in a type-safe, functional way. Instead of throwing exceptions or using nullable types, operations return `Res<V, E>` values that are either Ok (containing a value `V`) or Fail (containing an error `E`). The `rail {}` DSL provides short-circuit semantics, allowing failed operations to automatically propagate through your code without manual error checking at each step.
+// With Result-Kit — straight-line code, typed errors, automatic short-circuiting
+fun processOrder(orderId: Int): Res<Order, AppError> = rail {
+    val order = fetchOrder(orderId).orFail()
+    val validated = validateOrder(order).orFail()
+    saveOrder(validated).orFail()
+}
+```
 
-## Features
-
-- **Type-safe result type** — `@JvmInline value class Res<V, E>` with zero-allocation Ok path, covariant in both type parameters
-- **DSL scope** — `rail {}` blocks with `Rail<E>` for composing failable operations
-- **Coroutine support** — Same `rail {}` function works in both sync and suspend contexts (compiler disambiguates)
-- **Short-circuit operations** — `orFail()` unwrapping, `ensure()`, `ensureNotNull()`
-- **Safe exception handling** — `Rail.attempt {}` and `failMapping {} { block }` for converting exceptions to typed errors
-- **Clean composition** — Chain operations without manual error checking
+Whether you're currently using nullable returns, `kotlin.Result`, exception-heavy code, or another result library, the `rail {}` DSL gives you typed errors with straight-line control flow and zero runtime dependencies.
 
 ## Installation
 
@@ -25,49 +31,135 @@ dependencies {
 }
 ```
 
-## Usage
-
-### Basic DSL
-
-The `rail {}` block creates a `Rail<E>` where you can compose operations that return `Res<V, E>`:
+All examples below assume this import:
 
 ```kotlin
 import tech.codingzen.resultkit.*
+```
 
-data class User(val id: Int, val name: String)
+## The Res Type
 
-fun fetchUser(id: Int): Res<User, String> = rail {
-    if (id < 0) fail("User ID must be positive")
-    User(id, "User $id")
-}
+`Res<V, E>` is a result type with two states: `Ok` containing a success value of type `V`, or `Fail` containing an error of type `E`. Both type parameters are covariant, so `Res<String, IOException>` is assignable to `Res<Any, Throwable>`.
 
-fun getUserName(id: Int): Res<String, String> = rail {
-    val user = fetchUser(id).orFail()
-    user.name
-}
+`Res` is a `@JvmInline value class`. The Ok path stores the raw value with zero allocation. The Fail path wraps the error in an internal sentinel (one allocation). There are no runtime dependencies beyond the Kotlin standard library.
 
-// Usage
-val result = getUserName(123)
-result.fold(
-    onOk = { println("User: $it") },
-    onFail = { println("Error: $it") }
+### Creating Results
+
+```kotlin
+val success: Res<Int, Nothing> = Res.ok(42)
+val failure: Res<Nothing, String> = Res.failure("something went wrong")
+```
+
+### Consuming Results
+
+Because `Res` is a value class (not a sealed class), you cannot use exhaustive `when` expressions. Use `fold` for exhaustive handling:
+
+```kotlin
+val message: String = result.fold(
+    onOk = { value -> "Got: $value" },
+    onFail = { error -> "Error: $error" }
 )
 ```
 
-### Short-Circuit with orFail
-
-Use `.orFail()` to unwrap successful results or short-circuit on failure:
+Other accessors:
 
 ```kotlin
-val result = rail<Int, String> {
-    val x = operation1().orFail()  // Returns the value or short-circuits
-    val y = operation2().orFail()  // Only runs if operation1 succeeded
-    val z = operation3().orFail()  // Only runs if operation2 succeeded
-    x + y + z
+result.getOrNull()                             // V? — returns null on Fail
+result.errorOrNull()                           // E? — returns null on Ok
+result.getOrElse { error -> defaultValue }     // V — computes default from error
+result.getOrThrow()                            // V — throws E directly (requires E : Throwable)
+result.getOrThrow { e -> RuntimeException(e) } // V — throws transformed error
+result.errorOrThrow()                          // E — throws IllegalStateException on Ok
+```
+
+### Transforming Results
+
+```kotlin
+result.map { value -> value.toString() }       // Res<String, E> — transforms Ok, Fail passes through
+result.mapError { error -> AppError(error) }   // Res<V, AppError> — transforms Fail, Ok passes through
+result.recover { error -> fallbackValue }      // Res<V, Nothing> — converts Fail to Ok
+result.orElse { error -> tryAlternative() }    // Res<V, F> — fallible recovery, may itself fail
+result.flatMap { value -> nextOperation(it) }  // Res<U, E> — chains (V) -> Res<U, E>
+result.flatten()                               // Res<V, E> — unwraps Res<Res<V, E>, E>
+```
+
+### Side Effects
+
+```kotlin
+result.onOk { value -> log("Success: $value") }   // runs action on Ok, returns self
+result.onFail { error -> log("Error: $error") }    // runs action on Fail, returns self
+```
+
+Both return `this` for chaining: `result.onOk { log(it) }.onFail { report(it) }`.
+
+### Checking State
+
+```kotlin
+result.isOk    // true if this is a success
+result.isFail  // true if this is a failure
+```
+
+### Converting Nullable Values
+
+```kotlin
+val user: User? = findUser(id)
+val result: Res<User, String> = user.toResOr { "User not found" }
+```
+
+`toResOr` converts non-null to Ok, null to Fail with a lazily-evaluated error.
+
+### Conditional Failure
+
+```kotlin
+val result = Res.ok(age).toFailIf({ it < 0 }) { "Age cannot be negative: $it" }
+```
+
+`toFailIf` converts an Ok to Fail when the predicate matches. A Fail passes through unchanged.
+
+### kotlin.Result Interop
+
+```kotlin
+val kotlinResult: Result<Int> = runCatching { riskyOperation() }
+val res: Res<Int, Throwable> = kotlinResult.toRes()
+
+val backToResult: Result<Int> = res.toResult()  // requires E : Throwable
+```
+
+## The Rail DSL
+
+The `rail {}` block is the core of Result-Kit. It creates a scope where you can compose operations that return `Res`, with automatic short-circuiting on failure. The block returns `Res.Ok` on success or `Res.Fail` when any operation short-circuits.
+
+```kotlin
+fun fetchDashboard(userId: Int): Res<Dashboard, String> = rail {
+    val user = fetchUser(userId).orFail()           // unwraps Ok or short-circuits
+    val prefs = fetchPreferences(user.id).orFail()  // only runs if fetchUser succeeded
+    Dashboard(user, prefs)                          // returned as Res.Ok
 }
 ```
 
-Use `.orFail { mapError }` to convert between error types:
+Because `rail` is an `inline` function, it works in both synchronous and suspend contexts. The compiler disambiguates based on the call site — no separate API needed:
+
+```kotlin
+suspend fun fetchDashboard(userId: Int): Res<Dashboard, String> = rail {
+    val user = userService.getUser(userId).orFail()       // suspend call
+    val prefs = prefsService.getPreferences(user.id).orFail()
+    Dashboard(user, prefs)
+}
+```
+
+### Short-Circuiting with orFail
+
+`orFail()` unwraps an Ok value or short-circuits the enclosing `rail` with the Fail error:
+
+```kotlin
+val result = rail<Int, String> {
+    val x = operation1().orFail()  // returns V or short-circuits
+    val y = operation2().orFail()  // only runs if operation1 succeeded
+    x + y
+}
+```
+
+`orFail { mapError }` converts the error type before short-circuiting:
 
 ```kotlin
 val result = rail<User, AppError> {
@@ -77,7 +169,9 @@ val result = rail<User, AppError> {
 }
 ```
 
-### Validation with ensure / ensureNotNull
+### Validation with ensure and ensureNotNull
+
+`ensure` short-circuits if a condition is false. `ensureNotNull` short-circuits if a value is null:
 
 ```kotlin
 fun validateAge(age: Int): Res<Int, String> = rail {
@@ -93,370 +187,544 @@ fun parseUser(map: Map<String, Any?>): Res<User, String> = rail {
 }
 ```
 
-### Exception Handling with Rail.attempt
+### Explicit Failure
 
-Use `Rail.attempt {}` to convert throwing code into `Res<V, Exception>`:
+`fail(e)` short-circuits immediately with the given error:
+
+```kotlin
+fun divide(a: Int, b: Int): Res<Int, String> = rail {
+    if (b == 0) fail("Division by zero")
+    a / b
+}
+```
+
+## Exception Handling — Which Rail Do I Use?
+
+Inside `rail {}` blocks, you need to handle code that throws exceptions, code that returns `Res` with a different error type, or both. Result-Kit provides three rail types, each matching a specific call-site shape.
+
+### failMapping — Your Code Throws Exceptions
+
+Use `failMapping` when calling Java libraries, IO operations, serialization, or anything that communicates failure via exceptions rather than `Res`.
+
+```kotlin
+fun loadConfig(path: String): Res<Config, String> = rail {
+    val io = failMapping { e -> "IO error: ${e.message}" }
+
+    val raw = io { File(path).readText() }                 // catches IOException
+    val parsed = io { Json.decodeFromString<Config>(raw) }  // catches SerializationException
+    parsed
+}
+```
+
+`failMapping` creates a reusable `FailMappingRail<E>`. Invoke it with a block — exceptions are caught, mapped to your error type, and short-circuited. `CancellationException` is always rethrown to preserve structured concurrency. The `FailMappingRail` is reusable across multiple calls within the same rail block.
+
+### errorMapping — Your Code Returns Res with a Different Error Type
+
+Use `errorMapping` when composing functions from different domains that each return `Res` with their own error type, and you need to unify them into a single error type.
+
+```kotlin
+fun getDashboard(userId: Int): Res<Dashboard, AppError> = rail {
+    val http = errorMapping<HttpError> { AppError.Network(it) }
+    val db = errorMapping<DbError> { AppError.Database(it) }
+
+    val user = fetchUser(userId).orFail(http)        // Res<User, HttpError> → User
+    val settings = loadSettings(user.id).orFail(db)  // Res<Settings, DbError> → Settings
+    Dashboard(user, settings)
+}
+```
+
+`errorMapping` creates a reusable `ErrorMappingRail<D, E>`. Pass it to `.orFail(mapping)` to unwrap the Ok value or map the error and short-circuit. It does not catch exceptions.
+
+### mapping — Your Code Throws Exceptions AND Returns Res
+
+Use `mapping` when calling functions that can both throw (timeouts, serialization errors) and return `Res` with a domain-specific error type (HTTP 404, validation failure). This is common with HTTP clients, database drivers, and gRPC stubs.
+
+```kotlin
+fun getDashboard(userId: Int): Res<Dashboard, AppError> = rail {
+    val http = mapping<HttpError>(
+        onError = { AppError.Network(it) },
+        onException = { AppError.Unexpected(it) },
+    )
+    val user = http { userClient.getUser(userId) }          // catches exceptions AND unwraps Res
+    val profile = http { profileClient.getProfile(user.id) }
+    Dashboard(user, profile)
+}
+```
+
+`mapping` creates a reusable `MappingRail<D, E>`. Invoke it with a block that returns `Res<V, D>` — exceptions are caught and mapped via `onException`, and the returned `Res` is unwrapped or mapped via `onError`. Both paths short-circuit the outer rail.
+
+### Decision Summary
+
+| Call site shape | Rail type | Block returns | What it catches |
+|---|---|---|---|
+| Throws exceptions, no `Res` | `failMapping` | `V` | Exceptions |
+| Returns `Res<V, D>`, no exceptions | `errorMapping` | `Res` via `.orFail(mapping)` | Typed errors |
+| Throws exceptions AND returns `Res<V, D>` | `mapping` | `Res<V, D>` | Both |
+
+### Top-Level Usage (Outside rail {} Blocks)
+
+All three rail types can also be used as top-level entry points, creating their own `Rail` scope and returning `Res<V, E>` instead of short-circuiting an outer rail:
+
+```kotlin
+// FailMappingRail as top-level entry point
+val appRail = Rail.failMapping<AppError> { e -> AppError.Unexpected(e) }
+
+fun fetchUser(id: Int): Res<User, AppError> = appRail {
+    val user = apiClient.getUser(id)     // exceptions caught automatically
+    ensure(user.isActive) { AppError.Inactive(id) }
+    user
+}
+
+// ErrorMappingRail as top-level entry point
+val http = Rail.errorMapping<HttpError, AppError> { AppError.Network(it) }
+
+fun getUser(id: Int): Res<User, AppError> = http {
+    fetchUser(id).orFail()
+}
+
+// MappingRail as top-level entry point
+val httpRail = Rail.mapping<HttpError, AppError>(
+    onError = { AppError.Network(it) },
+    onException = { AppError.Unexpected(it) },
+)
+
+fun getUser(id: Int): Res<User, AppError> = httpRail {
+    userClient.getUser(id)   // returns Res<User, HttpError>, may throw
+}
+```
+
+The same instance behaves differently depending on context: top-level invoke returns `Res<V, E>`, while inside `rail {}` the member extension short-circuits and returns `V` directly. The Kotlin compiler enforces correct usage — a return-type mismatch is a compile error.
+
+### Rail.attempt
+
+`Rail.attempt` is a convenience for catching any exception without mapping it to a typed error:
 
 ```kotlin
 val config: Res<Config, Exception> = Rail.attempt { loadConfigFile(path) }
 ```
 
-You can chain `.mapError {}` if you need a typed error:
+It's equivalent to `Rail.failMapping { it }` followed by an invoke. Use it when you want `Res<V, Exception>` and don't need a typed error.
+
+## Combining Results with zip and zipOrAccumulate
+
+### zip (Fail-Fast)
+
+`zip` combines 2–4 independent results, short-circuiting on the first failure:
 
 ```kotlin
-val config: Res<Config, String> = Rail.attempt {
-    loadConfigFile(path)
-}.mapError { e -> "Failed to load config: ${e.message}" }
-```
-
-### Exception Handling with failMapping
-
-Use `failMapping {}` inside `rail {}` to create a reusable exception-catching scope. Invoke it with a block — on exception, the error is mapped and short-circuited:
-
-```kotlin
-fun loadAppConfig(path: String): Res<AppConfig, String> = rail {
-    val io = failMapping { e -> "IO error: ${e.message}" }
-
-    val raw = io { File(path).readText() }
-    val parsed = io { Json.decodeFromString<ConfigData>(raw) }
-
-    val validated = validateConfig(parsed).orFail()
-    AppConfig(validated)
+val result: Res<Dashboard, String> = zip(
+    { fetchUser(id) },
+    { fetchSettings(id) },
+    { fetchMetrics(id) },
+) { user, settings, metrics ->
+    Dashboard(user, settings, metrics)
 }
 ```
 
-`failMapping` creates a reusable `FailMappingRail` — invoke it multiple times with the same error mapping.
+### zipOrAccumulate (Error Accumulation)
 
-### Exception-Catching Rail with FailMappingRail
-
-Use `Rail.failMapping {}` to create a reusable entry point that catches all exceptions and maps them to your error type:
+`zipOrAccumulate` runs all operations and collects all errors into a `List<E>`:
 
 ```kotlin
-val appRail = Rail.failMapping { e -> AppError.Unexpected(e) }
-
-fun fetchUser(id: Int): Res<User, AppError> = appRail {
-    val user = apiClient.getUser(id)  // exceptions caught automatically
-    ensure(user.isActive) { AppError.Inactive(id) }
-    user
+val result: Res<User, List<String>> = zipOrAccumulate(
+    { validateName(name) },
+    { validateEmail(email) },
+    { validateAge(age) },
+) { validName, validEmail, validAge ->
+    User(validName, validEmail, validAge)
 }
-
-fun saveUser(user: User): Res<Unit, AppError> = appRail {
-    repository.save(user)  // exceptions caught automatically
-}
+// If name and age are invalid: Res.Fail(["Name too short", "Age must be positive"])
 ```
 
-This combines the full `Rail` DSL (orFail, fail, ensure, etc.) with automatic exception catching. Railway operations short-circuit as normal; any uncaught exception is mapped to a Fail result via the provided mapper.
+This is useful for form validation and similar cases where you want to report all errors at once rather than stopping at the first one. Note that the error type changes from `E` to `List<E>`.
 
-### Coroutine Support
+Both `zip` and `zipOrAccumulate` support arities 2 through 4.
 
-The same `rail {}` function works in suspend contexts — no separate API needed. Because `rail` is `inline`, the compiler allows suspend calls within the block based on call-site context:
+## Collection Extensions
+
+Result-Kit provides extensions for working with collections of `Res` values.
+
+### Querying
 
 ```kotlin
-suspend fun fetchUserData(userId: Int): Res<UserData, String> = rail {
-    val http = failMapping { e -> "HTTP error: ${e.message}" }
+val results: List<Res<Int, String>> = listOf(Res.ok(1), Res.failure("err"), Res.ok(3))
 
-    val user = http { userService.getUser(userId) }
-    val profile = http { profileService.getProfile(user.id) }
-    val preferences = http { preferencesService.get(user.id) }
-
-    UserData(user, profile, preferences)
-}
+results.allOk()   // false — true only if every element is Ok (true for empty lists)
+results.anyOk()   // true  — true if at least one element is Ok
+results.anyFail() // true  — true if at least one element is Fail
 ```
 
-## API Reference
-
-### Res<V, E>
-
-Inline value class representing either a successful value or an error. Covariant in both `V` and `E`. Uses a tagged union internally — Ok values are stored directly (zero allocation), Fail values are wrapped in an internal sentinel.
-
-**Checking the variant:**
-- `isOk: Boolean` / `isFail: Boolean` — check without unwrapping
-- `fold(onOk: (V) -> T, onFail: (E) -> T): T` — exhaustive handling (use instead of `when`)
-
-**Unwrapping:**
-- `getOrNull(): V?` — Ok value or `null`
-- `errorOrNull(): E?` — Fail error or `null`
-- `getOrThrow(): V` — Ok value or throws error (requires `E : Throwable`)
-- `getOrThrow(transform: (E) -> Throwable): V` — Ok value or throws transformed error
-- `errorOrThrow(): E` — Fail error or throws `IllegalStateException`
-- `getOrElse(default: (E) -> V): V` — Ok value or computed default
-
-**Transforming:**
-- `map(transform: (V) -> U): Res<U, E>` — transform the success value
-- `mapError(transform: (E) -> F): Res<V, F>` — transform the error value
-- `flatMap(transform: (V) -> Res<U, E>): Res<U, E>` — chain a failable operation on Ok (escape hatch for outside `rail {}`; prefer `rail {}` + `orFail()`)
-- `recover(transform: (E) -> V): Res<V, Nothing>` — convert Fail to Ok
-- `orElse(transform: (E) -> Res<V, F>): Res<V, F>` — fallback to another Res on Fail
-
-**Side effects:**
-- `onOk(action: (V) -> Unit): Res<V, E>` — side-effect on success, returns self
-- `onFail(action: (E) -> Unit): Res<V, E>` — side-effect on failure, returns self
-
-**Interop:**
-- `Result<V>.toRes(): Res<V, Throwable>` — convert kotlin.Result to Res
-- `Res<V, E : Throwable>.toResult(): Result<V>` — convert Res to kotlin.Result
-
-**Factory functions (on `Res.Companion`):**
-- `Res.ok(value): Res<V, Nothing>` — create a successful result
-- `Res.failure(error): Res<Nothing, E>` — create a failed result
-
-### rail {}
-
-Entry point for railway-oriented error handling.
+### Filtering
 
 ```kotlin
-inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E>
+results.filterOk()   // List<Int> — [1, 3], discards Fail elements
+results.filterFail() // List<String> — ["err"], discards Ok elements
 ```
 
-Executes the block with a `Rail<E>` receiver, giving access to `fail()`, `orFail()`, `ensure()`, and other short-circuit operations inside the block. Returns Ok on success or Fail on short-circuit. Works in both sync and suspend contexts since the function is `inline`.
+### Combining
 
-### Rail<E>
-
-DSL scope — the receiver type inside `rail {}` blocks. Provides short-circuit operations:
-
-- `fail(e: E): Nothing` — short-circuit with an error
-- `Res<V, E>.orFail(): V` — unwrap Ok or short-circuit with the Fail error
-- `Res<V, F>.orFail(mapError: (F) -> E): V` — unwrap Ok or short-circuit with mapped error
-- `ensure(condition: Boolean, error: () -> E)` — short-circuit if condition is false
-- `ensureNotNull(value: V?, error: () -> E): V` — short-circuit if value is null
-- `failMapping(mapError: (Exception) -> E): FailMappingRail<E>` — create a reusable exception-catching scope with error mapping. Invoke it with a block: `io { riskyOp() }` — returns `V` directly, short-circuits on exception.
-
-**Companion functions:**
-- `Rail.attempt { block }: Res<V, Exception>` — catch exceptions with identity mapping
-- `Rail.failMapping { e -> myError }: FailMappingRail<E>` — create a reusable exception-catching scope for use outside `rail {}` blocks
-
-### FailMappingRail<E>
-
-Reusable scope for catching exceptions and mapping them to a typed error. Two modes of operation:
-
-**Top-level** — create via `Rail.failMapping`, invoke to get `Res<V, E>`:
 ```kotlin
-val appRail = Rail.failMapping { e -> AppError.Unexpected(e) }
-val r: Res<User, AppError> = appRail { fetchUser(id) }
+// Fail-fast: short-circuits on the first Fail
+listOf(Res.ok(1), Res.ok(2), Res.ok(3)).combine()
+// → Res.Ok([1, 2, 3])
+
+listOf(Res.ok(1), Res.failure("err"), Res.ok(3)).combine()
+// → Res.Fail("err")
+
+// Partition: categorizes every element
+listOf(Res.ok(1), Res.failure("a"), Res.ok(3), Res.failure("b")).partition()
+// → Pair([1, 3], ["a", "b"])
 ```
 
-> The `FailMappingRail<E> { ... }` constructor is equivalent to `Rail.failMapping { ... }` —
-> use whichever reads better at your call site.
+### Fallible Iteration
 
-**Inside `rail {}` blocks** — create via `failMapping`, invoke to get unwrapped `V` (short-circuits on exception):
 ```kotlin
-val result = rail<Int, String> {
-    val io = failMapping { e -> "IO: ${e.message}" }
-    val data = io { loadData() }  // returns V, short-circuits on exception
-    process(data)
-}
-```
+// tryMap — maps each element through a failable transform, short-circuits on first Fail
+val result: Res<List<User>, String> = userIds.tryMap { id -> fetchUser(id) }
 
-Kotlin member extension resolution ensures the correct behavior is selected automatically.
+// tryForEach — executes a failable action on each element, short-circuits on first Fail
+val result: Res<Unit, String> = users.tryForEach { user -> saveUser(user) }
+```
 
 ## Common Pitfalls
 
-### Do not use raw `try/catch` inside `rail {}` blocks
+### Do not use raw try/catch inside rail {} blocks
 
-The `rail {}` DSL uses an internal exception (`FailException`, a direct `Throwable` subclass — **not** an `Exception`) for control flow.
-
-- `catch(e: Throwable)` inside `rail {}` will silently swallow `FailException`, breaking the railway
-- `catch(e: Exception)` inside `failMapping { } { }` blocks will intercept exceptions before the mapping can catch and translate them
+The `rail {}` DSL uses an internal exception (`FailException`, a direct `Throwable` subclass — not `Exception`) for control flow. If you catch `Throwable` inside a `rail {}` block, you will silently swallow this control-flow exception and break the railway:
 
 ```kotlin
-// BAD — catch(Throwable) swallows FailException, breaking short-circuit behavior
+// BAD — catches FailException, breaking short-circuit behavior
 val result = rail<Int, String> {
     val value = try {
         someResult.orFail()  // throws FailException on Fail
     } catch (e: Throwable) {  // catches FailException!
-        0  // railway is broken — orFail error is silently lost
+        0  // railway is broken — error is silently lost
     }
     value
 }
 ```
 
-Instead, use `Rail.attempt {}` or `failMapping {} { block }`:
+Use `failMapping` or `Rail.attempt` instead:
 
 ```kotlin
-// GOOD — Rail.attempt {} safely handles exceptions
-val config: Res<Config, Exception> = Rail.attempt { loadConfigFile(path) }
-
-// GOOD — failMapping {} { block } maps exceptions to your error type
+// GOOD — failMapping catches and maps exceptions safely
 val result = rail<Int, String> {
-    val http = failMapping { e -> "HTTP error: ${e.message}" }
-    val user = http { fetchUser(id) }
-    val prefs = http { fetchPrefs(id) }
-    process(user, prefs)
+    val io = failMapping { e -> "IO error: ${e.message}" }
+    io { riskyOperation() }
+}
+
+// GOOD — Rail.attempt for one-off exception catching
+val result: Res<Config, Exception> = Rail.attempt { loadConfigFile(path) }
+```
+
+### Database transactions and exception-based rollback
+
+Many database frameworks (Spring `@Transactional`, Exposed `transaction {}`, JOOQ, raw JDBC) use exceptions to trigger rollback. The `rail {}` DSL uses `FailException` (a `Throwable` subclass) for control flow. These two mechanisms can interfere with each other if the boundaries aren't set up correctly.
+
+**The rule: keep `rail {}` outside the transaction boundary.** Use `failMapping` to catch exceptions that escape the transaction after rollback has already occurred.
+
+```kotlin
+// GOOD — rail wraps the transaction, failMapping catches after rollback
+fun transferFunds(from: Int, to: Int, amount: BigDecimal): Res<Transfer, AppError> = rail {
+    val db = failMapping { e -> AppError.Database("Transfer failed: ${e.message}") }
+
+    db {
+        transaction {
+            // All DB ops inside the transaction — exceptions trigger rollback normally
+            val sender = accountRepo.findById(from) ?: throw NotFoundException("Account $from")
+            require(sender.balance >= amount) { "Insufficient funds" }
+            accountRepo.debit(from, amount)
+            accountRepo.credit(to, amount)
+            Transfer(from, to, amount)
+        }
+        // Transaction committed here. If any exception was thrown above,
+        // the transaction rolled back and the exception propagates to failMapping.
+    }
+}
+```
+
+**Why this ordering matters:**
+
+1. `accountRepo.debit()` throws `SQLException` →
+2. `transaction {}` catches it, rolls back, re-throws →
+3. `failMapping` catches the re-thrown exception, maps it to `AppError`, short-circuits the rail →
+4. `rail {}` catches `FailException`, returns `Res.Fail(AppError.Database(...))`
+
+The transaction framework sees the exception first and rolls back cleanly. Then `failMapping` translates it to a typed error.
+
+**BAD — `rail {}` inside the transaction:**
+
+```kotlin
+// BAD — FailException may confuse the transaction manager
+fun transferFunds(from: Int, to: Int, amount: BigDecimal): Res<Transfer, AppError> {
+    return transaction {
+        rail {
+            val sender = fetchAccount(from).orFail()  // throws FailException on Fail!
+            // FailException extends Throwable — some transaction frameworks will
+            // catch it, trigger rollback, and either swallow it or wrap it
+        }
+    }
+}
+```
+
+If the transaction framework catches `Throwable` for rollback (Spring does this by default for `Error` subclasses), `FailException` may trigger an unintended rollback or get wrapped in a framework-specific exception, losing the typed error.
+
+**Pattern: validate first, transact second**
+
+For operations that need both validation and database writes, validate outside the transaction and only enter the transaction for writes:
+
+```kotlin
+fun createOrder(request: OrderRequest): Res<Order, AppError> = rail {
+    // Validation — no DB, no transaction needed
+    val items = request.items.tryMap { validateItem(it) }
+        .orFail { AppError.Validation(it) }
+    ensure(items.isNotEmpty()) { AppError.Validation("Order must have at least one item") }
+
+    // Database — inside failMapping, which wraps the transaction
+    val db = failMapping { e -> AppError.Database(e.message ?: "DB error") }
+    db {
+        transaction {
+            val order = orderRepo.create(request.customerId)
+            items.forEach { item -> orderItemRepo.create(order.id, item) }
+            inventoryService.reserve(order.id, items)  // throws on insufficient stock
+            order
+        }
+    }
+}
+```
+
+**Pattern: transaction returns `Res`, evaluate outside**
+
+If your transaction logic itself produces a `Res` (e.g., the repository returns `Res`), evaluate it *after* the transaction commits:
+
+```kotlin
+fun deactivateUser(userId: Int): Res<Unit, AppError> = rail {
+    val db = failMapping { e -> AppError.Database(e.message ?: "DB error") }
+
+    // Transaction returns Res — don't orFail() inside the transaction
+    val result: Res<Unit, AppError> = db {
+        transaction {
+            val user = userRepo.findById(userId)
+                ?: return@transaction Res.failure(AppError.NotFound("User $userId"))
+            userRepo.deactivate(user.id)
+            emailService.sendDeactivationNotice(user.email)
+            Res.ok(Unit)
+        }
+    }
+
+    // Evaluate the Res after the transaction has committed/rolled back
+    result.orFail()
 }
 ```
 
 ### Static analysis with detekt
 
-If you use [detekt](https://detekt.dev) in your project, the built-in `TooGenericExceptionCaught` rule (active by default) will flag `catch(Throwable)` and `catch(Exception)` patterns. This catches the footgun above at compile time.
+If you use [detekt](https://detekt.dev), the built-in `TooGenericExceptionCaught` rule (active by default) will flag `catch(Throwable)` and `catch(Exception)` patterns, catching this footgun at compile time:
 
 ```kotlin
-// build.gradle.kts
 plugins {
     id("io.gitlab.arturbosch.detekt") version "1.23.7"
 }
 ```
 
-## Use Cases
+## API Reference
 
-### API Request Handling
+### Res<V, E> — Result Type
 
-Compose multiple API calls with automatic error propagation:
+| Signature | Description |
+|---|---|
+| `Res.ok(value: V): Res<V, Nothing>` | Creates an Ok result |
+| `Res.failure(error: E): Res<Nothing, E>` | Creates a Fail result |
+| `isOk: Boolean` | True if Ok |
+| `isFail: Boolean` | True if Fail |
 
-```kotlin
-suspend fun fetchDashboardData(userId: Int): Res<Dashboard, String> = rail {
-    val api = failMapping { e -> "API error: ${e.message}" }
+### Res Extensions — Accessors
 
-    val user = api { apiClient.getUser(userId) }
-    val metrics = api { apiClient.getMetrics(user.id) }
+| Signature | Description |
+|---|---|
+| `getOrNull(): V?` | Ok value or null |
+| `errorOrNull(): E?` | Fail error or null |
+| `getOrElse(default: (E) -> V): V` | Ok value or computed default |
+| `getOrThrow(): V` | Ok value or throws E (requires E : Throwable) |
+| `getOrThrow(transform: (E) -> Throwable): V` | Ok value or throws transformed error |
+| `errorOrThrow(): E` | Fail error or throws IllegalStateException |
 
-    Dashboard(user, metrics)
-}
-```
+### Res Extensions — Transforms
 
-### Configuration Loading
+| Signature | Description |
+|---|---|
+| `fold(onOk: (V) -> T, onFail: (E) -> T): T` | Exhaustive match on both branches |
+| `map(transform: (V) -> U): Res<U, E>` | Transforms Ok value, Fail passes through |
+| `mapError(transform: (E) -> F): Res<V, F>` | Transforms Fail error, Ok passes through |
+| `recover(transform: (E) -> V): Res<V, Nothing>` | Converts Fail to Ok (infallible) |
+| `orElse(transform: (E) -> Res<V, F>): Res<V, F>` | Fallible recovery, may fail with new type |
+| `flatMap(transform: (V) -> Res<U, E>): Res<U, E>` | Chains failable computation (prefer rail + orFail) |
+| `flatten(): Res<V, E>` | Unwraps `Res<Res<V, E>, E>` |
 
-Load and validate configuration with descriptive error messages:
+### Res Extensions — Side Effects
 
-```kotlin
-fun loadAppConfig(): Res<AppConfig, String> = rail {
-    val io = failMapping { e -> "IO error: ${e.message}" }
+| Signature | Description |
+|---|---|
+| `onOk(action: (V) -> Unit): Res<V, E>` | Runs action on Ok, returns self |
+| `onFail(action: (E) -> Unit): Res<V, E>` | Runs action on Fail, returns self |
 
-    val raw = io { File(CONFIG_PATH).readText() }
-    val parsed = io { Json.decodeFromString<ConfigData>(raw) }
-    val validated = validateConfig(parsed).orFail()
+### Res Extensions — Factories and Conditionals
 
-    AppConfig(validated)
-}
+| Signature | Description |
+|---|---|
+| `V?.toResOr(error: () -> E): Res<V, E>` | Non-null to Ok, null to Fail |
+| `toFailIf(predicate: (V) -> Boolean, transform: (V) -> E): Res<V, E>` | Ok to Fail if predicate matches |
 
-fun validateConfig(data: ConfigData): Res<ConfigData, String> = rail {
-    ensure(data.port in 1..65535) { "Port must be between 1 and 65535" }
-    ensure(data.host.isNotBlank()) { "Host cannot be blank" }
-    ensure(data.timeout > 0) { "Timeout must be positive" }
-    data
-}
-```
+### Res Extensions — Interop
 
-### Database Queries
+| Signature | Description |
+|---|---|
+| `Result<V>.toRes(): Res<V, Throwable>` | kotlin.Result to Res |
+| `Res<V, E : Throwable>.toResult(): Result<V>` | Res to kotlin.Result |
 
-Compose multiple read operations with shared error mapping:
+### Rail DSL — Entry Points
 
-```kotlin
-suspend fun getUserProfile(userId: Int): Res<UserProfile, String> = rail {
-    val db = failMapping { e -> "DB error: ${e.message}" }
+| Signature | Description |
+|---|---|
+| `rail(block: Rail<E>.() -> V): Res<V, E>` | Entry point, returns Ok on success or Fail on short-circuit |
+| `Rail.attempt(block: Rail<Exception>.() -> V): Res<V, Exception>` | Catches any exception as the error |
 
-    val user = db { userRepo.findById(userId) }
-    val prefs = db { prefsRepo.findByUserId(userId) }
-    val avatar = db { avatarRepo.findByUserId(userId) }
+### Rail Companion — Factory Functions
 
-    UserProfile(user, prefs, avatar)
-}
-```
+| Signature | Description |
+|---|---|
+| `Rail.failMapping(mapError: (Exception) -> E): FailMappingRail<E>` | Creates a top-level exception-catching rail |
+| `Rail.errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E>` | Creates a top-level typed-error-mapping rail |
+| `Rail.mapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>` | Creates a top-level combined rail |
 
-### Input Validation Pipeline
+### Rail<E> Scope — Available Inside rail {} Blocks
 
-Chain multiple validation steps:
+| Signature | Description |
+|---|---|
+| `fail(e: E): Nothing` | Short-circuit with error |
+| `Res<V, E>.orFail(): V` | Unwrap Ok or short-circuit with Fail error |
+| `Res<V, F>.orFail(mapError: (F) -> E): V` | Unwrap Ok or short-circuit with mapped error |
+| `Res<V, F>.orFail(mapping: ErrorMappingRail<F, E>): V` | Unwrap Ok or short-circuit with mapped error via reusable mapping |
+| `ensure(condition: Boolean, error: () -> E)` | Short-circuit if condition is false |
+| `ensureNotNull(value: V?, error: () -> E): V` | Short-circuit if value is null |
+| `failMapping(mapError: (Exception) -> E): FailMappingRail<E>` | Create exception-catching scope |
+| `errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E>` | Create typed-error-mapping scope |
+| `mapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>` | Create combined scope |
 
-```kotlin
-fun registerUser(
-    email: String,
-    password: String,
-    age: Int
-): Res<User, String> = rail {
-    val validEmail = validateEmail(email).orFail()
-    val validPassword = validatePassword(password).orFail()
-    ensure(age in 0..150) { "Age out of range" }
+### FailMappingRail<E>
 
-    val repo = failMapping { e -> "DB error: ${e.message}" }
-    repo { userRepository.create(validEmail, validPassword, age) }
-}
+Catches exceptions thrown inside a block and maps them to a typed error. Created via `failMapping` inside `rail {}`, via `Rail.failMapping` at the top level, or directly via `FailMappingRail<E> { e -> ... }`.
 
-fun validateEmail(email: String): Res<String, String> = rail {
-    ensure(email.contains('@')) { "Email must contain @" }
-    ensure(email.length >= 3) { "Email too short" }
-    email
-}
+| Context | Invoke signature | Returns |
+|---|---|---|
+| Inside `rail {}` (member extension) | `invoke(block: Rail<E>.() -> V): V` | Unwrapped value, short-circuits outer rail on exception |
+| Top-level | `invoke(block: Rail<E>.() -> V): Res<V, E>` | `Res<V, E>` |
 
-fun validatePassword(password: String): Res<String, String> = rail {
-    ensure(password.length >= 8) { "Password must be at least 8 characters" }
-    ensure(password.any { it.isDigit() }) { "Password must contain a digit" }
-    password
-}
-```
+### ErrorMappingRail<D, E>
 
-> **Note:** `rail {}` short-circuits on the first error. If you need to accumulate
-> multiple validation errors (e.g., all invalid fields at once), collect them into
-> a list before calling `fail()`:
->
-> ```kotlin
-> fun validate(input: Input): Res<Input, List<String>> = rail {
->     val errors = mutableListOf<String>()
->     if (!input.emailValid) errors += "Invalid email"
->     if (!input.passwordValid) errors += "Password too short"
->     ensure(errors.isEmpty()) { errors }
->     input
-> }
-> ```
+Maps typed errors from domain `D` to domain `E`. Created via `errorMapping` inside `rail {}` or via `Rail.errorMapping` at the top level. Does not catch exceptions.
+
+| Context | Invoke signature | Returns |
+|---|---|---|
+| Inside `rail {}` (member extension) | `invoke(res: Res<V, D>): V` | Unwrapped value, short-circuits outer rail on error |
+| Top-level | `invoke(block: Rail<D>.() -> V): Res<V, E>` | `Res<V, E>` |
+
+> **Preferred pattern:** Inside `rail {}` blocks, use `.orFail(mapping)` instead of the member extension `invoke(res)` — it reads consistently with `orFail()` and `orFail { }`. The `invoke` member extension still works but `.orFail(mapping)` is the primary pattern.
+
+### MappingRail<D, E>
+
+Catches exceptions AND maps typed errors. Created via `mapping` inside `rail {}` or via `Rail.mapping` at the top level.
+
+| Context | Invoke signature | Returns |
+|---|---|---|
+| Inside `rail {}` (member extension) | `invoke(block: Rail<E>.() -> Res<V, D>): V` | Unwrapped value, short-circuits outer rail |
+| Top-level | `invoke(block: Rail<E>.() -> Res<V, D>): Res<V, E>` | `Res<V, E>` |
+
+### Zip Functions
+
+| Signature | Description |
+|---|---|
+| `zip(block1: () -> Res<V1, E>, block2: () -> Res<V2, E>, transform: (V1, V2) -> R): Res<R, E>` | Fail-fast combine 2 results |
+| `zip(block1, block2, block3, transform): Res<R, E>` | Fail-fast combine 3 results |
+| `zip(block1, block2, block3, block4, transform): Res<R, E>` | Fail-fast combine 4 results |
+| `zipOrAccumulate(block1: () -> Res<V1, E>, block2: () -> Res<V2, E>, transform: (V1, V2) -> R): Res<R, List<E>>` | Accumulate errors from 2 results |
+| `zipOrAccumulate(block1, block2, block3, transform): Res<R, List<E>>` | Accumulate errors from 3 results |
+| `zipOrAccumulate(block1, block2, block3, block4, transform): Res<R, List<E>>` | Accumulate errors from 4 results |
+
+### Collection Extensions — Iterable<Res<V, E>>
+
+| Signature | Description |
+|---|---|
+| `allOk(): Boolean` | True if every element is Ok (true for empty) |
+| `anyOk(): Boolean` | True if at least one Ok (false for empty) |
+| `anyFail(): Boolean` | True if at least one Fail (false for empty) |
+| `filterOk(): List<V>` | Collects Ok values |
+| `filterFail(): List<E>` | Collects Fail errors |
+| `combine(): Res<List<V>, E>` | Fail-fast collect into list |
+| `partition(): Pair<List<V>, List<E>>` | Splits into Ok values and Fail errors |
+
+### Collection Extensions — Iterable<V>
+
+| Signature | Description |
+|---|---|
+| `tryMap(transform: (V) -> Res<U, E>): Res<List<U>, E>` | Fail-fast map through failable transform |
+| `tryForEach(action: (V) -> Res<*, E>): Res<Unit, E>` | Fail-fast side-effecting iteration |
+
+### Annotations
+
+| Annotation | Description |
+|---|---|
+| `@RailDsl` | `@DslMarker` annotation applied to `Rail`. Prevents implicit access to an outer `Rail` receiver from within a nested `rail {}` block. If you see a compiler error about implicit receiver access being restricted, this is why — use explicit qualification or restructure the nesting. |
+
+### Exceptions
+
+| Type | Description |
+|---|---|
+| `ErrorMapperException` | Thrown when a `mapError` lambda itself throws. Contains `originalException` (the error being mapped) and the mapper's exception as `cause`. Both are attached via `addSuppressed`. |
+
+## Design
+
+### Inline Value Class
+
+`Res` is a `@JvmInline value class` wrapping `Any?`. Ok stores the raw value directly (zero allocation). Fail wraps the error in an internal `Failure` sentinel (one allocation). Variant discrimination is via `instanceof Failure`. Nested `Res<Res<...>, ...>` is safe because the inner `Res` gets boxed when stored as `Any?` in generic contexts.
+
+### Control Flow via Exceptions
+
+The DSL uses an internal `FailException` for short-circuit control flow. `FailException` extends `Throwable` directly — not `Exception` — so that `catch(Exception)` blocks inside `failMapping` don't accidentally intercept it. The exception is caught at the `rail {}` boundary and converted to `Res.Fail`. Stack trace filling is skipped for performance since the exception is purely for control flow.
+
+### Scope Isolation
+
+Each `rail {}` call creates a new `Rail` instance. `FailException` carries a reference to its originating scope. The `rail {}` boundary only catches exceptions from its own scope — nested rail failures from inner scopes propagate correctly. This prevents inner `fail()` calls from being silently caught by outer rails.
+
+### Typed Errors
+
+`Res<V, E>` is parameterized over both the value type and the error type. Errors can be strings, enums, sealed classes, data classes, or any other type. The library imposes no constraints on error representation.
+
+### Single Entry Point
+
+Both synchronous and suspend code use the same `rail {}` function. Because `rail` is `inline`, the compiler resolves suspend calls within the lambda based on call-site context, eliminating the need for a separate suspend variant.
+
+### CancellationException Handling
+
+All exception-catching paths (`failMapping`, `mapping`, `Rail.attempt`) rethrow `CancellationException` to preserve structured concurrency. This uses `kotlin.coroutines.cancellation.CancellationException` (the stdlib type) to avoid a runtime dependency on kotlinx-coroutines.
+
+### No Runtime Dependencies
+
+Result-Kit has zero runtime dependencies beyond the Kotlin standard library.
 
 ## Building
 
-Build the project:
-
 ```bash
-./gradlew build
-```
-
-Run tests:
-
-```bash
-./gradlew test
-```
-
-Publish to local Maven repository:
-
-```bash
-./gradlew publishToMavenLocal
+./gradlew build         # Build the project
+./gradlew test          # Run tests
+./gradlew publishToMavenLocal  # Publish to local Maven repository
 ```
 
 ## Requirements
 
 - Kotlin 1.9.25 or higher
 - Gradle 8.5 or higher
-- JDK 21 or higher (for building — `jvmToolchain(21)`; output targets JVM 8 bytecode)
-
-## Dependencies
-
-- [kotlinx-coroutines-test](https://github.com/Kotlin/kotlinx.coroutines) - For testing suspend functions (test dependency only)
-
-Result-Kit has no runtime dependencies beyond the Kotlin standard library.
-
-## Design
-
-Result-Kit implements **Railway-Oriented Programming**, a functional pattern where operations return a result type that represents either success or failure. This creates two "tracks" through your code:
-
-- **Happy path** — The success track where operations proceed normally
-- **Error path** — The failure track where errors short-circuit remaining operations
-
-Key design decisions:
-
-### Inline Value Class
-
-`Res<V, E>` is a `@JvmInline value class` wrapping `Any?`. Ok values are stored directly (zero allocation on the Ok path), while Fail values are wrapped in an internal `Failure` sentinel. Variant discrimination is via `instanceof Failure`. Since `Res` is not a sealed class, use `fold()` or `isOk`/`isFail` for exhaustive handling instead of `when` expressions.
-
-### Control Flow via Exceptions
-
-The DSL uses an internal exception (`FailException`, extending `Throwable` directly — not `Exception`) for control flow to achieve short-circuit semantics. This exception is never exposed to callers — it is caught at the `rail {}` boundary and converted to a Fail result. Stack trace filling is skipped for performance since the exception is purely for control flow.
-
-### Typed Errors
-
-`Res<V, E>` is parameterized over both the value type `V` and the error type `E`, giving callers full control over error representation. Errors can be strings, enums, sealed classes, or any other type — the library imposes no constraints.
-
-### Single Entry Point
-
-Both sync and suspend code use the same `rail {}` function. Because `rail` is `inline`, the compiler can resolve suspend calls within the lambda based on the call-site context, eliminating the need for a separate suspend variant.
-
-### No Runtime Dependencies
-
-Result-Kit deliberately has zero runtime dependencies beyond the Kotlin standard library, making it lightweight and suitable for any Kotlin project.
+- JVM 1.8 or higher (compiled for Java 8 compatibility)
 
 ## License
 
@@ -464,4 +732,4 @@ MIT License
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests on [GitHub](https://github.com/phansen314/result-kit).
+Contributions are welcome. Please feel free to submit issues and pull requests on [GitHub](https://github.com/phansen314/result-kit).
