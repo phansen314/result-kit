@@ -9,6 +9,15 @@ import kotlin.contracts.contract
 
 // -- zip (fail-fast) --
 
+/**
+ * Evaluates [block1] and [block2] sequentially, short-circuiting on the first Fail.
+ * If both succeed, applies [transform] to the Ok values.
+ *
+ * Blocks are evaluated in order — [block2] is **not** called if [block1] fails.
+ * For error accumulation (evaluate all blocks regardless of failure), use [zipOrAccumulate].
+ *
+ * @return Ok with the transformed value, or the first Fail encountered.
+ */
 public inline fun <V1, V2, E, R> zip(
     block1: () -> Res<V1, E>,
     block2: () -> Res<V2, E>,
@@ -26,6 +35,7 @@ public inline fun <V1, V2, E, R> zip(
     return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2))
 }
 
+/** Overload of [zip] for three results. See the two-parameter overload for full documentation. */
 public inline fun <V1, V2, V3, E, R> zip(
     block1: () -> Res<V1, E>,
     block2: () -> Res<V2, E>,
@@ -47,6 +57,7 @@ public inline fun <V1, V2, V3, E, R> zip(
     return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2, r3.inlineValue as V3))
 }
 
+/** Overload of [zip] for four results. See the two-parameter overload for full documentation. */
 public inline fun <V1, V2, V3, V4, E, R> zip(
     block1: () -> Res<V1, E>,
     block2: () -> Res<V2, E>,
@@ -74,6 +85,15 @@ public inline fun <V1, V2, V3, V4, E, R> zip(
 
 // -- zipOrAccumulate (error accumulation) --
 
+/**
+ * Evaluates **all** blocks and accumulates errors. If all succeed, applies [transform]
+ * to the Ok values. If any fail, returns a Fail containing a [List] of all errors.
+ *
+ * Unlike [zip], all blocks are always evaluated regardless of earlier failures.
+ * This is useful for validation scenarios where you want to report all errors at once.
+ *
+ * @return Ok with the transformed value, or Fail with a list of all errors.
+ */
 public inline fun <V1, V2, E, R> zipOrAccumulate(
     block1: () -> Res<V1, E>,
     block2: () -> Res<V2, E>,
@@ -93,6 +113,7 @@ public inline fun <V1, V2, E, R> zipOrAccumulate(
     return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2))
 }
 
+/** Overload of [zipOrAccumulate] for three results. See the two-parameter overload for full documentation. */
 public inline fun <V1, V2, V3, E, R> zipOrAccumulate(
     block1: () -> Res<V1, E>,
     block2: () -> Res<V2, E>,
@@ -116,6 +137,7 @@ public inline fun <V1, V2, V3, E, R> zipOrAccumulate(
     return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2, r3.inlineValue as V3))
 }
 
+/** Overload of [zipOrAccumulate] for four results. See the two-parameter overload for full documentation. */
 public inline fun <V1, V2, V3, V4, E, R> zipOrAccumulate(
     block1: () -> Res<V1, E>,
     block2: () -> Res<V2, E>,
