@@ -40,8 +40,6 @@ http { fetchUser(id) }
 - `errorMapping { d -> myError }` — inside `rail {}`, creates `ErrorMappingRail<D, E>`. Invoke with a `Res<V, D>`: `http(fetchUser(id))` — returns `V` directly, short-circuits on error with mapped type. Reusable across multiple calls
 - `Rail.mapping(onError = { d -> myError }, onException = { e -> myError })` — companion factory, returns `MappingRail<D, E>`. Catches exceptions AND unwraps Res, maps both to `E`. Top-level invoke returns `Res<V, E>`
 - `mapping(onError = { d -> myError }, onException = { e -> myError })` — inside `rail {}`, creates `MappingRail<D, E>`. Invoke with a block: `http { fetchUser(id) }` — returns `V` directly, short-circuits on exception or error. Reusable across multiple calls
-- `Rail.mappingWith { e -> myError }` — companion factory, returns `MappingFactory<E>` with shared exception mapper. Call `.error<D> { d -> myError }` to produce `MappingRail<D, E>` instances per error domain
-- `mappingWith { e -> myError }` — inside `rail {}`, creates `MappingFactory<E>`. Call `.error<D> { d -> myError }` to produce `MappingRail<D, E>` instances per error domain
 
 ## Res accessors
 
@@ -60,20 +58,16 @@ http { fetchUser(id) }
 
 - `V?.toResOr { error }` — convert nullable to `Res<V, E>`, lazy error on null
 - `Res<V, E>.toFailIf(predicate) { transform }` — convert Ok to Fail if predicate matches
-- `Res<V, E>.toFailUnless(predicate) { transform }` — convert Ok to Fail if predicate does not match
-- `Res<V?, E>.transpose()` — `Res<V?, E>` to `Res<V, E>?` (null Ok becomes null, Fail stays Fail)
 - `Res<Res<V, E>, E>.flatten()` — unwrap nested Res
-- `val (value, error) = res` — destructuring via `component1()` / `component2()` (one is always null)
 
 ## Collection extensions (Iterable.kt)
 
-- `Iterable<Res<V, E>>.allOk()` / `anyOk()` / `allFail()` / `anyFail()` — boolean aggregates
+- `Iterable<Res<V, E>>.allOk()` / `anyOk()` / `anyFail()` — boolean aggregates
 - `Iterable<Res<V, E>>.filterOk()` / `filterFail()` — collect Ok values or Fail errors
 - `Iterable<Res<V, E>>.combine()` — `Res<List<V>, E>` (short-circuits on first Fail)
 - `Iterable<Res<V, E>>.partition()` — `Pair<List<V>, List<E>>`
 - `Iterable<V>.tryMap { (V) -> Res<U, E> }` — `Res<List<U>, E>` (short-circuits on first Fail)
 - `Iterable<V>.tryForEach { (V) -> Res<*, E> }` — `Res<Unit, E>`
-- `Iterable<V>.tryFilter { (V) -> Res<Boolean, E> }` — `Res<List<V>, E>`
 
 ## Zip (Zip.kt)
 
@@ -89,5 +83,4 @@ http { fetchUser(id) }
 - **`Rail` allocation per `rail {}` call** — acceptable, not a performance concern
 - **Three mapping rail types** — `failMapping` catches exceptions, `errorMapping` maps typed Res errors, `mapping` does both. Each covers a distinct call-site shape: raw-throwing code, Res-returning code, and code that does both. The types parallel each other with consistent naming and usage patterns
 - **`MappingRail` has dual invoke like `FailMappingRail`** — top-level invoke creates its own Rail scope and returns `Res<V, E>`; member extension inside `rail {}` short-circuits the outer scope and returns `V`. Kotlin member extension resolution selects the correct one automatically
-- **`MappingFactory` eliminates repeated exception mappers** — `mappingWith { handler }` pre-fills the exception mapper; call `.error<D> { }` per error domain. Convenience, not capability — everything `MappingFactory` does can be done with individual `mapping()` calls
 - **Zero runtime dependencies** — only Kotlin stdlib; recommend tools (like detekt) to consumers via docs, do not add as build dependencies

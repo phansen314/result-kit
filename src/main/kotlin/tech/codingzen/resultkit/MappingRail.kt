@@ -10,7 +10,7 @@ package tech.codingzen.resultkit
  *
  * **Two modes of operation:**
  *
- * **Top-level** — create via [Rail.Companion.mapping] or [MappingFactory.error], invoke to get [Res]:
+ * **Top-level** — create via [Rail.Companion.mapping], invoke to get [Res]:
  * ```
  * val httpRail = Rail.mapping<HttpError, AppError>(
  *     onError = { AppError.Network(it) },
@@ -69,37 +69,4 @@ public inline operator fun <V, D, E> MappingRail<D, E>.invoke(
             throw ErrorMapperException(e, me)
         }
     }
-}
-
-/**
- * Factory for creating [MappingRail] instances with a shared exception mapper.
- *
- * Eliminates repetition when multiple error domains share the same exception handling:
- *
- * ```
- * // Inside rail {}
- * val result = rail<Dashboard, AppError> {
- *     val apis = mappingWith { AppError.Unexpected(it) }
- *     val http = apis.error<HttpError> { AppError.Network(it) }
- *     val db = apis.error<DbError> { AppError.Database(it) }
- *
- *     val user = http { fetchUser(id) }
- *     val settings = db { loadSettings(user.id) }
- *     Dashboard(user, settings)
- * }
- *
- * // Outside rail {} — reusable across functions
- * val apis = Rail.mappingWith<AppError> { AppError.Unexpected(it) }
- * val httpRail = apis.error<HttpError> { AppError.Network(it) }
- * val dbRail = apis.error<DbError> { AppError.Database(it) }
- *
- * fun getUser(id: Int): Res<User, AppError> = httpRail { fetchUser(id) }
- * fun getSettings(id: Int): Res<Settings, AppError> = dbRail { loadSettings(id) }
- * ```
- */
-public class MappingFactory<E>(
-    @PublishedApi internal val onException: (Exception) -> E,
-) {
-    public fun <D> error(onError: (D) -> E): MappingRail<D, E> =
-        MappingRail(onError, onException)
 }

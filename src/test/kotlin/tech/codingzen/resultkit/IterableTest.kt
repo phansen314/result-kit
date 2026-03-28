@@ -24,23 +24,6 @@ class IterableTest {
         assertTrue(emptyList<Res<Int, String>>().allOk())
     }
 
-    // -- allFail --
-
-    @Test
-    fun `allFail returns true when all Fail`() {
-        assertTrue(listOf(Res.failure("a"), Res.failure("b")).allFail())
-    }
-
-    @Test
-    fun `allFail returns false when any Ok`() {
-        assertFalse(listOf(Res.failure("a"), Res.ok(1)).allFail())
-    }
-
-    @Test
-    fun `allFail returns true for empty list`() {
-        assertTrue(emptyList<Res<Int, String>>().allFail())
-    }
-
     // -- anyOk --
 
     @Test
@@ -202,34 +185,6 @@ class IterableTest {
         assertTrue(result.isFail)
         assertEquals("err", result.errorOrNull())
         assertEquals(2, count)
-    }
-
-    // -- tryFilter --
-
-    @Test
-    fun `tryFilter returns filtered list on all Ok predicates`() {
-        val result = listOf(1, 2, 3, 4).tryFilter { Res.ok(it % 2 == 0) }
-        assertTrue(result.isOk)
-        assertEquals(listOf(2, 4), result.getOrNull())
-    }
-
-    @Test
-    fun `tryFilter short-circuits on Fail predicate`() {
-        var count = 0
-        val result = listOf(1, 2, 3).tryFilter { v ->
-            count++
-            if (v == 2) Res.failure("err") else Res.ok(true)
-        }
-        assertTrue(result.isFail)
-        assertEquals("err", result.errorOrNull())
-        assertEquals(2, count)
-    }
-
-    @Test
-    fun `tryFilter empty list returns Ok of empty list`() {
-        val result = emptyList<Int>().tryFilter { Res.ok(true) }
-        assertTrue(result.isOk)
-        assertEquals(emptyList(), result.getOrNull())
     }
 
     // -- null edge cases --
