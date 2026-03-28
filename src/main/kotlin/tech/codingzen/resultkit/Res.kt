@@ -138,14 +138,6 @@ public inline fun <V, E> Res<V, E>.errorOrThrow(): E {
     return (inlineValue as Failure).error as E
 }
 
-// -- Destructuring --
-
-@Suppress("NOTHING_TO_INLINE")
-public inline operator fun <V, E> Res<V, E>.component1(): V? = getOrNull()
-
-@Suppress("NOTHING_TO_INLINE")
-public inline operator fun <V, E> Res<V, E>.component2(): E? = errorOrNull()
-
 // -- Factories --
 
 public inline fun <V, E> V?.toResOr(error: () -> E): Res<V, E> {

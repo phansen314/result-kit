@@ -31,36 +31,6 @@ class ResExtensionsTest {
         assertFalse(called)
     }
 
-    // -- component1 / component2 (destructuring) --
-
-    @Test
-    fun `destructuring Ok gives value and null error`() {
-        val (value, error) = Res.ok(42)
-        assertEquals(42, value)
-        assertNull(error)
-    }
-
-    @Test
-    fun `destructuring Fail gives null value and error`() {
-        val (value, error) = Res.failure("oops")
-        assertNull(value)
-        assertEquals("oops", error)
-    }
-
-    @Test
-    fun `destructuring Ok with null value`() {
-        val (value, error) = Res.ok<Nothing?>(null)
-        assertNull(value)
-        assertNull(error)
-    }
-
-    @Test
-    fun `destructuring Fail with null error`() {
-        val (value, error) = Res.failure<Nothing?>(null)
-        assertNull(value)
-        assertNull(error)
-    }
-
     // -- toFailIf --
 
     @Test

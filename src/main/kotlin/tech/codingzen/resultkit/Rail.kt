@@ -54,15 +54,6 @@ public class Rail<E> @PublishedApi internal constructor() {
     ): MappingRail<D, E> = MappingRail(onError, onException)
 
     /**
-     * Creates a [MappingFactory] with a shared exception mapper.
-     *
-     * Call [MappingFactory.error] to produce [MappingRail] instances for each error domain,
-     * all sharing the same exception handling.
-     */
-    public fun mappingWith(onException: (Exception) -> E): MappingFactory<E> =
-        MappingFactory(onException)
-
-    /**
      * Member extension: catches exceptions thrown inside [block], maps them via [FailMappingRail.mapError],
      * and short-circuits the outer [rail] with the mapped error.
      *
@@ -147,19 +138,6 @@ public class Rail<E> @PublishedApi internal constructor() {
             onError: (D) -> E,
             onException: (Exception) -> E,
         ): MappingRail<D, E> = MappingRail(onError, onException)
-
-        /**
-         * Creates a [MappingFactory] for use as a top-level entry point.
-         *
-         * ```
-         * val apis = Rail.mappingWith<AppError> { AppError.Unexpected(it) }
-         * val httpRail = apis.error<HttpError> { AppError.Network(it) }
-         * fun getUser(id: Int): Res<User, AppError> = httpRail { fetchUser(id) }
-         * ```
-         */
-        public fun <E> mappingWith(
-            onException: (Exception) -> E,
-        ): MappingFactory<E> = MappingFactory(onException)
     }
 }
 
