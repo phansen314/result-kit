@@ -20,7 +20,7 @@ class ScopeIsolationTest {
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
@@ -40,7 +40,7 @@ class ScopeIsolationTest {
             inner.orFail() + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.getOrNull)
+        assertEquals(15, result.getOrNull())
     }
 
     // -- FailMappingRail top-level invoke (outside rail {}) --
@@ -105,7 +105,24 @@ class ScopeIsolationTest {
             x + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.getOrNull)
+        assertEquals(15, result.getOrNull())
+    }
+
+    // -- inner rail FailException passthrough in member extension --
+
+    @Test
+    fun `inner rail FailException passes through failMapping member extension`() {
+        val result = rail<Int, String> {
+            val io = failMapping { e -> "IO: ${e.message}" }
+            io {
+                // nested rail's FailException is a Throwable, not Exception —
+                // must pass through the member extension's catch(Exception) unimpeded
+                val inner = rail<Int, String> { fail("inner error") }
+                inner.orFail()
+            }
+        }
+        assertTrue(result.isFail)
+        assertEquals("inner error", result.errorOrThrow())
     }
 
     // -- suspend context --

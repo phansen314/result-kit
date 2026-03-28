@@ -1,11 +1,13 @@
+@file:Suppress("UNCHECKED_CAST")
+
 package tech.codingzen.resultkit
 
 /**
  * Reusable scope for catching exceptions and mapping them to a typed error.
  *
- * **Top-level usage** — create via constructor, invoke to get [Res]:
+ * **Top-level usage** — create via [Rail.failMapping] or constructor, invoke to get [Res]:
  * ```
- * val appRail = FailMappingRail<AppError> { e -> AppError.Unexpected(e) }
+ * val appRail = Rail.failMapping { e -> AppError.Unexpected(e) }
  * val r: Res<User, AppError> = appRail { fetchUser(id) }
  * ```
  *
@@ -23,7 +25,7 @@ package tech.codingzen.resultkit
  * and returns `V` directly (short-circuiting on error). The compiler enforces correct usage —
  * a return-type mismatch is a compile error.
  */
-class FailMappingRail<E>(
+public class FailMappingRail<E>(
     @PublishedApi internal val mapError: (Exception) -> E
 )
 
@@ -33,17 +35,19 @@ class FailMappingRail<E>(
  * Inside a [rail] block, the member extension [Rail.invoke] takes precedence and
  * returns the unwrapped value directly instead.
  */
-inline operator fun <V, E> FailMappingRail<E>.invoke(
+public inline operator fun <V, E> FailMappingRail<E>.invoke(
     block: Rail<E>.() -> V
 ): Res<V, E> {
     val scope = Rail<E>()
     return try {
         Res.ok(scope.block())
+    // FailException catch needed — this invoke owns its own Rail scope and must
+    // convert FailException to Res.Fail. (Compare with the member extension in Rail
+    // which lets FailException pass through to the outer rail {}.)
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
-        @Suppress("UNCHECKED_CAST")
         Res.failure(e.error as E)
-    // CancellationException is a subtype of Exception on JVM — must be caught first to preserve structured concurrency
+    // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
     } catch (e: Exception) {

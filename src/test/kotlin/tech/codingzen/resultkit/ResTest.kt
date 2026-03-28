@@ -15,7 +15,7 @@ class ResTest {
     fun `ok creates Ok`() {
         val result = Res.ok(42)
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
@@ -52,7 +52,14 @@ class ResTest {
     fun `map transforms Ok value`() {
         val result = Res.ok(5).map { it * 3 }
         assertTrue(result.isOk)
-        assertEquals(15, result.getOrNull)
+        assertEquals(15, result.getOrNull())
+    }
+
+    @Test
+    fun `map producing null returns Ok null`() {
+        val result = Res.ok(42).map { null }
+        assertTrue(result.isOk)
+        assertEquals(null, result.getOrNull())
     }
 
     @Test
@@ -78,7 +85,7 @@ class ResTest {
         val original = Res.ok(42)
         val result = original.mapError { "mapped" }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
         assertEquals(original, result)
     }
 
@@ -172,22 +179,31 @@ class ResTest {
 
     @Test
     fun `getOrNull returns value for Ok`() {
-        assertEquals(42, Res.ok(42).getOrNull)
+        assertEquals(42, Res.ok(42).getOrNull())
     }
 
     @Test
     fun `getOrNull returns null for Fail`() {
-        assertEquals(null, Res.failure("err").getOrNull)
+        assertEquals(null, Res.failure("err").getOrNull())
     }
 
     @Test
     fun `errorOrNull returns error for Fail`() {
-        assertEquals("err", Res.failure("err").errorOrNull)
+        assertEquals("err", Res.failure("err").errorOrNull())
     }
 
     @Test
     fun `errorOrNull returns null for Ok`() {
-        assertEquals(null, Res.ok(42).errorOrNull)
+        assertEquals(null, Res.ok(42).errorOrNull())
+    }
+
+    // -- errorOrThrow --
+
+    @Test
+    fun `errorOrThrow throws on Ok`() {
+        assertFailsWith<IllegalStateException> {
+            Res.ok(42).errorOrThrow()
+        }
     }
 
     // -- recover --
@@ -196,21 +212,21 @@ class ResTest {
     fun `recover transforms Fail to Ok`() {
         val result = Res.failure("err").recover { it.length }
         assertTrue(result.isOk)
-        assertEquals(3, result.getOrNull)
+        assertEquals(3, result.getOrNull())
     }
 
     @Test
     fun `recover passes through Ok`() {
         val result = Res.ok(42).recover { -1 }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
     fun `recover producing null returns ok null`() {
         val result = Res.failure("err").recover { null }
         assertTrue(result.isOk)
-        assertEquals(null, result.getOrNull)
+        assertEquals(null, result.getOrNull())
     }
 
     // -- orElse --
@@ -219,7 +235,7 @@ class ResTest {
     fun `orElse transforms Fail with fallback that succeeds`() {
         val result = Res.failure("err").orElse { Res.ok(it.length) }
         assertTrue(result.isOk)
-        assertEquals(3, result.getOrNull)
+        assertEquals(3, result.getOrNull())
     }
 
     @Test
@@ -233,7 +249,7 @@ class ResTest {
     fun `orElse passes through Ok`() {
         val result = Res.ok(42).orElse { Res.failure("fallback") }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
@@ -243,13 +259,43 @@ class ResTest {
         assertEquals(3, result.errorOrThrow())
     }
 
+    // -- flatMap --
+
+    @Test
+    fun `flatMap transforms Ok with function returning Ok`() {
+        val result = Res.ok(5).flatMap { Res.ok(it * 3) }
+        assertTrue(result.isOk)
+        assertEquals(15, result.getOrNull())
+    }
+
+    @Test
+    fun `flatMap transforms Ok with function returning Fail`() {
+        val result = Res.ok(5).flatMap { Res.failure("nope") }
+        assertTrue(result.isFail)
+        assertEquals("nope", result.errorOrThrow())
+    }
+
+    @Test
+    fun `flatMap passes through Fail`() {
+        val result = Res.failure("err").flatMap { Res.ok(42) }
+        assertTrue(result.isFail)
+        assertEquals("err", result.errorOrThrow())
+    }
+
+    @Test
+    fun `flatMap changes value type`() {
+        val result: Res<String, String> = Res.ok(42).flatMap { Res.ok(it.toString()) }
+        assertTrue(result.isOk)
+        assertEquals("42", result.getOrNull())
+    }
+
     // -- map null edge cases --
 
     @Test
     fun `map on ok null passes null to transform`() {
         val result = Res.ok(null).map { it }
         assertTrue(result.isOk)
-        assertEquals(null, result.getOrNull)
+        assertEquals(null, result.getOrNull())
     }
 
     // -- null edge cases (tagged union invariants) --
@@ -259,7 +305,7 @@ class ResTest {
         val result = Res.ok(null)
         assertTrue(result.isOk)
         assertFalse(result.isFail)
-        assertEquals(null, result.getOrNull)
+        assertEquals(null, result.getOrNull())
     }
 
     @Test
@@ -267,7 +313,7 @@ class ResTest {
         val result = Res.failure(null)
         assertTrue(result.isFail)
         assertFalse(result.isOk)
-        assertEquals(null, result.errorOrNull)
+        assertEquals(null, result.errorOrNull())
     }
 
     @Test
@@ -297,8 +343,8 @@ class ResTest {
         val inner: Res<Int, String> = Res.failure("inner")
         val outer: Res<Res<Int, String>, Nothing> = Res.ok(inner)
         assertTrue(outer.isOk)
-        assertTrue(outer.getOrNull!!.isFail)
-        assertEquals("inner", outer.getOrNull!!.errorOrNull)
+        assertTrue(outer.getOrNull()!!.isFail)
+        assertEquals("inner", outer.getOrNull()!!.errorOrNull())
     }
 
     @Test
@@ -307,7 +353,25 @@ class ResTest {
         val outer: Res<Nothing, Res<Int, Nothing>> = Res.failure(inner)
         assertTrue(outer.isFail)
         assertTrue(outer.errorOrThrow().isOk)
-        assertEquals(42, outer.errorOrThrow().getOrNull)
+        assertEquals(42, outer.errorOrThrow().getOrNull())
+    }
+
+    @Test
+    fun `getOrNull on nested ok-wrapping-failure returns inner Res`() {
+        val inner: Res<Int, String> = Res.failure("inner")
+        val outer: Res<Res<Int, String>, Nothing> = Res.ok(inner)
+        val unwrapped = outer.getOrNull()
+        assertTrue(unwrapped!!.isFail)
+        assertEquals("inner", unwrapped.errorOrNull())
+    }
+
+    @Test
+    fun `errorOrNull on nested failure-wrapping-ok returns inner Res`() {
+        val inner: Res<Int, Nothing> = Res.ok(42)
+        val outer: Res<Nothing, Res<Int, Nothing>> = Res.failure(inner)
+        val unwrapped = outer.errorOrNull()
+        assertTrue(unwrapped!!.isOk)
+        assertEquals(42, unwrapped.getOrNull())
     }
 
     // -- equals / hashCode / toString --
@@ -332,5 +396,36 @@ class ResTest {
     fun `toString formats correctly`() {
         assertEquals("Ok(42)", Res.ok(42).toString())
         assertEquals("Fail(err)", Res.failure("err").toString())
+    }
+
+    // -- kotlin.Result interop --
+
+    @Test
+    fun `Result success toRes returns Ok`() {
+        val result = Result.success(42).toRes()
+        assertTrue(result.isOk)
+        assertEquals(42, result.getOrNull())
+    }
+
+    @Test
+    fun `Result failure toRes returns Fail`() {
+        val ex = RuntimeException("boom")
+        val result = Result.failure<Int>(ex).toRes()
+        assertTrue(result.isFail)
+        assertEquals(ex, result.errorOrThrow())
+    }
+
+    @Test
+    fun `Res Ok toResult returns success`() {
+        val result: Res<Int, RuntimeException> = Res.ok(42)
+        assertEquals(Result.success(42), result.toResult())
+    }
+
+    @Test
+    fun `Res Fail toResult returns failure`() {
+        val ex = RuntimeException("boom")
+        val result: Res<Int, RuntimeException> = Res.failure(ex)
+        assertTrue(result.toResult().isFailure)
+        assertEquals(ex, result.toResult().exceptionOrNull())
     }
 }

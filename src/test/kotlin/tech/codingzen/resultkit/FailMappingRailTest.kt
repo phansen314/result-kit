@@ -26,7 +26,7 @@ class FailMappingRailTest {
         val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRes { 42 }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
@@ -39,7 +39,7 @@ class FailMappingRailTest {
             x + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.getOrNull)
+        assertEquals(15, result.getOrNull())
     }
 
     @Test
@@ -92,7 +92,7 @@ class FailMappingRailTest {
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
@@ -104,13 +104,13 @@ class FailMappingRailTest {
         val r3 = appRes { 3 }
 
         assertTrue(r1.isOk)
-        assertEquals(1, r1.getOrNull)
+        assertEquals(1, r1.getOrNull())
 
         assertTrue(r2.isFail)
         assertEquals("Error: fail", r2.errorOrThrow())
 
         assertTrue(r3.isOk)
-        assertEquals(3, r3.getOrNull)
+        assertEquals(3, r3.getOrNull())
     }
 
     @Test
@@ -142,7 +142,7 @@ class FailMappingRailTest {
             x + 1
         }
         assertTrue(result.isOk)
-        assertEquals(43, result.getOrNull)
+        assertEquals(43, result.getOrNull())
     }
 
     @Test
@@ -154,7 +154,7 @@ class FailMappingRailTest {
             a + b
         }
         assertTrue(result.isOk)
-        assertEquals(30, result.getOrNull)
+        assertEquals(30, result.getOrNull())
     }
 
     @Test
@@ -212,7 +212,7 @@ class FailMappingRailTest {
             x
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     // -- ErrorMapperException --

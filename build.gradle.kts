@@ -21,6 +21,7 @@ tasks.test {
     useJUnitPlatform()
 }
 kotlin {
+    explicitApi()
     jvmToolchain(21)
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)

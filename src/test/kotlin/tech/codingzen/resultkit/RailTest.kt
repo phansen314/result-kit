@@ -11,14 +11,14 @@ class RailTest {
     // -- rail basics --
 
     @Test
-    fun `rail returns Ok on success`() = runTest {
+    fun `rail returns Ok on success`() {
         val result = rail<Int, String> { 42 }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
-    fun `rail returns Fail on fail`() = runTest {
+    fun `rail returns Fail on fail`() {
         val result = rail<Int, String> { fail("failed") }
         assertTrue(result.isFail)
         assertEquals("failed", result.errorOrThrow())
@@ -27,27 +27,27 @@ class RailTest {
     // -- orFail --
 
     @Test
-    fun `orFail unwraps Ok value`() = runTest {
+    fun `orFail unwraps Ok value`() {
         val result = rail<Int, String> {
             val x = Res.ok(10).orFail()
             x + 5
         }
         assertTrue(result.isOk)
-        assertEquals(15, result.getOrNull)
+        assertEquals(15, result.getOrNull())
     }
 
     @Test
-    fun `orFail unwraps null Ok value`() = runTest {
+    fun `orFail unwraps null Ok value`() {
         val result = rail<Int?, String> {
             val x: Int? = Res.ok(null).orFail()
             x
         }
         assertTrue(result.isOk)
-        assertEquals(null, result.getOrNull)
+        assertEquals(null, result.getOrNull())
     }
 
     @Test
-    fun `orFail short-circuits on Fail`() = runTest {
+    fun `orFail short-circuits on Fail`() {
         val result = rail<Int, String> {
             val x: Int = Res.failure("fail").orFail()
             x + 1
@@ -59,7 +59,7 @@ class RailTest {
     // -- orFail with mapError --
 
     @Test
-    fun `orFail with mapError converts error type`() = runTest {
+    fun `orFail with mapError converts error type`() {
         val result = rail<Int, String> {
             val x: Int = Res.failure(404).orFail { code -> "HTTP $code" }
             x + 1
@@ -71,17 +71,17 @@ class RailTest {
     // -- ensure --
 
     @Test
-    fun `ensure passes on true condition`() = runTest {
+    fun `ensure passes on true condition`() {
         val result = rail<Int, String> {
             ensure(true) { "should not happen" }
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
-    fun `ensure fails on false condition`() = runTest {
+    fun `ensure fails on false condition`() {
         val result = rail<Int, String> {
             ensure(false) { "validation failed" }
             42
@@ -93,23 +93,58 @@ class RailTest {
     // -- ensureNotNull --
 
     @Test
-    fun `ensureNotNull returns value when not null`() = runTest {
+    fun `ensureNotNull returns value when not null`() {
         val result = rail<Int, String> {
             val x = ensureNotNull(42) { "was null" }
             x + 1
         }
         assertTrue(result.isOk)
-        assertEquals(43, result.getOrNull)
+        assertEquals(43, result.getOrNull())
     }
 
     @Test
-    fun `ensureNotNull fails on null`() = runTest {
+    fun `ensureNotNull fails on null`() {
         val result = rail<Int, String> {
             val x = ensureNotNull<Int>(null) { "was null" }
             x + 1
         }
         assertTrue(result.isFail)
         assertEquals("was null", result.errorOrThrow())
+    }
+
+    // -- recover / orElse inside rail --
+
+    @Test
+    fun `recover inside rail converts Fail before orFail`() {
+        val result = rail<Int, String> {
+            val inner: Res<Int, String> = Res.failure("err")
+            val recovered = inner.recover { it.length }
+            recovered.orFail()
+        }
+        assertTrue(result.isOk)
+        assertEquals(3, result.getOrNull())
+    }
+
+    @Test
+    fun `orElse inside rail converts Fail before orFail`() {
+        val result = rail<Int, String> {
+            val inner: Res<Int, Int> = Res.failure(404)
+            val fallback = inner.orElse { Res.ok(0) }
+            fallback.orFail { "unexpected: $it" }
+        }
+        assertTrue(result.isOk)
+        assertEquals(0, result.getOrNull())
+    }
+
+    @Test
+    fun `orElse inside rail with fallback that fails`() {
+        val result = rail<Int, String> {
+            val inner: Res<Int, Int> = Res.failure(404)
+            val fallback: Res<Int, String> = inner.orElse { Res.failure("HTTP $it") }
+            fallback.orFail()
+        }
+        assertTrue(result.isFail)
+        assertEquals("HTTP 404", result.errorOrThrow())
     }
 
     // -- suspend --
@@ -126,7 +161,7 @@ class RailTest {
             x * 2
         }
         assertTrue(result.isOk)
-        assertEquals(84, result.getOrNull)
+        assertEquals(84, result.getOrNull())
     }
 
     @Test
@@ -145,7 +180,7 @@ class RailTest {
     }
 
     @Test
-    fun `chained orFail calls short-circuit on first error`() = runTest {
+    fun `chained orFail calls short-circuit on first error`() {
         val result = rail<Int, String> {
             val a = Res.ok(1).orFail()
             val b: Int = Res.failure("fail at b").orFail()
@@ -177,7 +212,7 @@ class RailTest {
     fun `non-local return works in sync context - normal path`() {
         val result = syncNonLocalReturn(5)
         assertTrue(result.isOk)
-        assertEquals(10, result.getOrNull)
+        assertEquals(10, result.getOrNull())
     }
 
     private suspend fun suspendNonLocalReturn(id: Int): Res<Int, String> {
@@ -200,7 +235,7 @@ class RailTest {
     fun `non-local return works in suspend context - normal path`() = runTest {
         val result = suspendNonLocalReturn(5)
         assertTrue(result.isOk)
-        assertEquals(10, result.getOrNull)
+        assertEquals(10, result.getOrNull())
     }
 
     private fun failMappingRailNonLocalReturn(id: Int): Res<Int, String> {
