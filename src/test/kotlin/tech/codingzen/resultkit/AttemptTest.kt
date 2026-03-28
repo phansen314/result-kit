@@ -15,7 +15,7 @@ class AttemptTest {
     fun `attempt returns Ok on success`() {
         val result = Rail.attempt { 42 }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 
     @Test
@@ -40,6 +40,6 @@ class AttemptTest {
             42
         }
         assertTrue(result.isOk)
-        assertEquals(42, result.getOrNull)
+        assertEquals(42, result.getOrNull())
     }
 }

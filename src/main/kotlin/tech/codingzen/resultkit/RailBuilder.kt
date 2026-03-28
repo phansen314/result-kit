@@ -1,3 +1,5 @@
+@file:Suppress("UNCHECKED_CAST")
+
 package tech.codingzen.resultkit
 
 /**
@@ -13,14 +15,13 @@ package tech.codingzen.resultkit
  * Also avoid `catch(e: Exception)` inside [Rail.failMapping]`{ }` blocks — it will intercept
  * exceptions before the mapping can catch and translate them.
  */
-inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E> {
+public inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E> {
     val scope = Rail<E>()
     return try {
         Res.ok(scope.block())
     // No CancellationException guard needed — we only catch FailException (a Throwable, not Exception)
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
-        @Suppress("UNCHECKED_CAST")
         Res.failure(e.error as E)
     }
 }
