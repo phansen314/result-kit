@@ -235,6 +235,9 @@ val appRail = Rail.failMapping { e -> AppError.Unexpected(e) }
 val r: Res<User, AppError> = appRail { fetchUser(id) }
 ```
 
+> The `FailMappingRail<E> { ... }` constructor is equivalent to `Rail.failMapping { ... }` —
+> use whichever reads better at your call site.
+
 **Inside `rail {}` blocks** — create via `failMapping`, invoke to get unwrapped `V` (short-circuits on exception):
 ```kotlin
 val result = rail<Int, String> {
