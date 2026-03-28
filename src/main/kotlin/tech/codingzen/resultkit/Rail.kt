@@ -14,6 +14,7 @@ package tech.codingzen.resultkit
  *
  * Use [failMapping]`{ }` for safe exception handling instead.
  */
+@RailDsl
 public class Rail<E> @PublishedApi internal constructor() {
     public fun fail(e: E): Nothing {
         throw FailException(e as Any?, this)
@@ -38,6 +39,28 @@ public class Rail<E> @PublishedApi internal constructor() {
 
     public fun failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
         FailMappingRail(mapError)
+
+    public fun <D> errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
+        ErrorMappingRail(mapError)
+
+    /**
+     * Creates a [MappingRail] that both catches exceptions and maps typed errors.
+     *
+     * Use when calling functions that can throw AND return [Res] with a typed error.
+     */
+    public fun <D> mapping(
+        onError: (D) -> E,
+        onException: (Exception) -> E,
+    ): MappingRail<D, E> = MappingRail(onError, onException)
+
+    /**
+     * Creates a [MappingFactory] with a shared exception mapper.
+     *
+     * Call [MappingFactory.error] to produce [MappingRail] instances for each error domain,
+     * all sharing the same exception handling.
+     */
+    public fun mappingWith(onException: (Exception) -> E): MappingFactory<E> =
+        MappingFactory(onException)
 
     /**
      * Member extension: catches exceptions thrown inside [block], maps them via [FailMappingRail.mapError],
@@ -65,12 +88,78 @@ public class Rail<E> @PublishedApi internal constructor() {
             }
         }
 
+    /**
+     * Member extension: unwraps [res] if Ok, or maps the error via [ErrorMappingRail.mapError]
+     * and short-circuits the outer [rail] with the mapped error.
+     *
+     * Unlike [FailMappingRail.invoke], this does **not** catch exceptions — it only
+     * translates typed errors between domains.
+     */
+    @Suppress("NOTHING_TO_INLINE")
+    public inline operator fun <V, D> ErrorMappingRail<D, @UnsafeVariance E>.invoke(res: Res<V, D>): V =
+        res.orFail { mapError(it) }
+
+    /**
+     * Runs [block], catches exceptions via [MappingRail.onException], then unwraps the
+     * returned [Res] via [MappingRail.onError]. Short-circuits the outer [rail] on either.
+     *
+     * [Rail.fail] calls inside [block] bypass both mappers — they short-circuit the
+     * outer rail directly. Only JVM exceptions and typed [Res] errors are mapped.
+     * [CancellationException] is always rethrown to preserve structured concurrency.
+     */
+    public inline operator fun <V, D> MappingRail<D, @UnsafeVariance E>.invoke(
+        block: Rail<E>.() -> Res<V, D>
+    ): V =
+        try {
+            this@Rail.block().orFail { onError(it) }
+        // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            try { fail(onException(e)) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(e, me)
+            }
+        }
+
     public companion object {
         public fun <E> failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
             FailMappingRail(mapError)
 
+        public fun <D, E> errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
+            ErrorMappingRail(mapError)
+
         public inline fun <V> attempt(block: Rail<Exception>.() -> V): Res<V, Exception> =
             FailMappingRail<Exception> { it }(block)
+
+        /**
+         * Creates a [MappingRail] for use as a top-level entry point.
+         *
+         * ```
+         * val httpRail = Rail.mapping<HttpError, AppError>(
+         *     onError = { AppError.Network(it) },
+         *     onException = { AppError.Unexpected(it) },
+         * )
+         * fun getUser(id: Int): Res<User, AppError> = httpRail { fetchUser(id) }
+         * ```
+         */
+        public fun <D, E> mapping(
+            onError: (D) -> E,
+            onException: (Exception) -> E,
+        ): MappingRail<D, E> = MappingRail(onError, onException)
+
+        /**
+         * Creates a [MappingFactory] for use as a top-level entry point.
+         *
+         * ```
+         * val apis = Rail.mappingWith<AppError> { AppError.Unexpected(it) }
+         * val httpRail = apis.error<HttpError> { AppError.Network(it) }
+         * fun getUser(id: Int): Res<User, AppError> = httpRail { fetchUser(id) }
+         * ```
+         */
+        public fun <E> mappingWith(
+            onException: (Exception) -> E,
+        ): MappingFactory<E> = MappingFactory(onException)
     }
 }
 

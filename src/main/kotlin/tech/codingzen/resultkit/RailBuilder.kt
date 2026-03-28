@@ -1,6 +1,11 @@
 @file:Suppress("UNCHECKED_CAST")
+@file:OptIn(ExperimentalContracts::class)
 
 package tech.codingzen.resultkit
+
+import kotlin.contracts.ExperimentalContracts
+import kotlin.contracts.InvocationKind
+import kotlin.contracts.contract
 
 /**
  * Entry point for railway-oriented error handling.
@@ -16,6 +21,7 @@ package tech.codingzen.resultkit
  * exceptions before the mapping can catch and translate them.
  */
 public inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E> {
+    contract { callsInPlace(block, InvocationKind.EXACTLY_ONCE) }
     val scope = Rail<E>()
     return try {
         Res.ok(scope.block())

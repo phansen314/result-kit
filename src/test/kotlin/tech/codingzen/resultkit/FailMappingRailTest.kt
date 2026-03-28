@@ -11,6 +11,16 @@ import kotlin.test.assertTrue
 
 class FailMappingRailTest {
 
+    // -- Rail.failMapping companion factory --
+
+    @Test
+    fun `Rail companion failMapping creates equivalent FailMappingRail`() {
+        val appRes = Rail.failMapping { e -> "Error: ${e.message}" }
+        val result: Res<Int, String> = appRes { throw RuntimeException("boom") }
+        assertTrue(result.isFail)
+        assertEquals("Error: boom", result.errorOrThrow())
+    }
+
     // -- top-level invoke (returns Res) --
 
     @Test
