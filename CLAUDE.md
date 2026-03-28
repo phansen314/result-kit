@@ -58,19 +58,16 @@ http { fetchUser(id) }
 
 - `V?.toResOr { error }` — convert nullable to `Res<V, E>`, lazy error on null
 - `Res<V, E>.toFailIf(predicate) { transform }` — convert Ok to Fail if predicate matches
-- `Res<V, E>.toFailUnless(predicate) { transform }` — convert Ok to Fail if predicate does not match
-- `Res<V?, E>.transpose()` — `Res<V?, E>` to `Res<V, E>?` (null Ok becomes null, Fail stays Fail)
 - `Res<Res<V, E>, E>.flatten()` — unwrap nested Res
 
 ## Collection extensions (Iterable.kt)
 
-- `Iterable<Res<V, E>>.allOk()` / `anyOk()` / `allFail()` / `anyFail()` — boolean aggregates
+- `Iterable<Res<V, E>>.allOk()` / `anyOk()` / `anyFail()` — boolean aggregates
 - `Iterable<Res<V, E>>.filterOk()` / `filterFail()` — collect Ok values or Fail errors
 - `Iterable<Res<V, E>>.combine()` — `Res<List<V>, E>` (short-circuits on first Fail)
 - `Iterable<Res<V, E>>.partition()` — `Pair<List<V>, List<E>>`
 - `Iterable<V>.tryMap { (V) -> Res<U, E> }` — `Res<List<U>, E>` (short-circuits on first Fail)
 - `Iterable<V>.tryForEach { (V) -> Res<*, E> }` — `Res<Unit, E>`
-- `Iterable<V>.tryFilter { (V) -> Res<Boolean, E> }` — `Res<List<V>, E>`
 
 ## Zip (Zip.kt)
 

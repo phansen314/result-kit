@@ -16,30 +16,37 @@ package tech.codingzen.resultkit
  */
 @RailDsl
 public class Rail<E> @PublishedApi internal constructor() {
+    /** Short-circuits this rail, producing a [Res.failure] with error [e] from the enclosing [rail] block. */
     public fun fail(e: E): Nothing {
         throw FailException(e as Any?, this)
     }
 
+    /** Unwraps the Ok value, or short-circuits this rail with the Fail error. */
     @Suppress("NOTHING_TO_INLINE")
     public inline fun <V> Res<V, E>.orFail(): V =
         if (inlineValue is Failure) fail(inlineValue.error as E)
         else inlineValue as V
 
+    /** Unwraps the Ok value, or maps the error via [mapError] and short-circuits this rail. */
     public inline fun <V, F> Res<V, F>.orFail(mapError: (F) -> E): V =
         if (inlineValue is Failure) fail(mapError(inlineValue.error as F))
         else inlineValue as V
 
+    /** Short-circuits this rail with [error] if [condition] is `false`. Analogous to [require]. */
     public inline fun ensure(condition: Boolean, error: () -> E) {
         if (!condition) fail(error())
     }
 
+    /** Returns [value] if non-null, or short-circuits this rail with [error]. Analogous to [requireNotNull]. */
     public inline fun <V> ensureNotNull(value: V?, error: () -> E): V {
         return value ?: fail(error())
     }
 
+    /** Creates a [FailMappingRail] for catching exceptions within sub-blocks of this rail. */
     public fun failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
         FailMappingRail(mapError)
 
+    /** Creates an [ErrorMappingRail] for mapping typed errors from a different domain into this rail's error type. */
     public fun <D> errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
         ErrorMappingRail(mapError)
 
@@ -114,12 +121,19 @@ public class Rail<E> @PublishedApi internal constructor() {
         }
 
     public companion object {
+        /** Creates a top-level [FailMappingRail] for catching exceptions and mapping them to typed errors. */
         public fun <E> failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
             FailMappingRail(mapError)
 
+        /** Creates a top-level [ErrorMappingRail] for mapping typed errors between domains. */
         public fun <D, E> errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
             ErrorMappingRail(mapError)
 
+        /**
+         * Convenience entry point that catches any [Exception] and returns it as the error type.
+         *
+         * Equivalent to `Rail.failMapping { it }` followed by an invoke.
+         */
         public inline fun <V> attempt(block: Rail<Exception>.() -> V): Res<V, Exception> =
             FailMappingRail<Exception> { it }(block)
 
@@ -152,16 +166,16 @@ internal class FailException(val error: Any?, val scope: Any) : Throwable(
 }
 
 /**
- * Thrown when the `mapError` lambda passed to [FailMappingRail] itself throws an exception.
+ * Thrown when a `mapError` lambda itself throws an exception.
  *
- * The [cause] is the exception thrown by the mapper; [originalException] is the exception
+ * The [cause] is the exception thrown by the mapper; [originalException] is the error
  * that the mapper was trying to map.
  */
 public class ErrorMapperException(
-    public val originalException: Exception,
+    public val originalException: Throwable,
     cause: Exception
 ) : RuntimeException(
-    "FailMappingRail mapError threw while mapping ${originalException::class.simpleName}: ${cause.message}",
+    "mapError threw while mapping ${originalException::class.simpleName}: ${cause.message}",
     cause
 ) {
     init {
