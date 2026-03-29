@@ -28,8 +28,13 @@ Add the dependency to your `build.gradle.kts`:
 ```kotlin
 dependencies {
     implementation("tech.codingzen:result-kit:1.0.0")
+
+    // Optional: KSP module for @TraceContext automatic traced-wrapper generation
+    ksp("tech.codingzen:result-kit-ksp:1.0.0")
 }
 ```
+
+The KSP module requires the [KSP Gradle plugin](https://kotlinlang.org/docs/ksp-quickstart.html). The core `result-kit` module has zero runtime dependencies and can be used standalone.
 
 All examples below assume this import:
 
@@ -386,6 +391,137 @@ val result: Res<List<User>, String> = userIds.tryMap { id -> fetchUser(id) }
 val result: Res<Unit, String> = users.tryForEach { user -> saveUser(user) }
 ```
 
+## Error Context Chains
+
+When a `Res.Fail` propagates through several layers of code, it can be hard to know where the failure originated or what operations were in flight. Error context chains let you attach breadcrumb frames — a message and optional source location — to a failure as it unwinds, without changing the error type `E` or wrapping `Res` in another type.
+
+Context is stored inside the internal `Failure` sentinel. The public `E` type is untouched. On the Ok path there is zero overhead — lambdas are only evaluated when the result is actually a failure.
+
+### Attaching Context with .context()
+
+```kotlin
+fun loadUserProfile(id: Int): Res<Profile, AppError> =
+    userRepo.findById(id)
+        .context { "loading profile for user $id" }
+
+fun handleRequest(userId: Int): Res<Response, AppError> =
+    loadUserProfile(userId)
+        .context { "handling request" }
+        .context({ "request for user $userId" }, { SourceLocation("RequestHandler.kt", 42, "handleRequest") })
+```
+
+Both lambdas are only evaluated if the result is a Fail. Index 0 in the frame list is the innermost frame (first `.context()` call, closest to the error site).
+
+### Attaching Context Inside rail {}
+
+Use `withContext` to attach a frame to any failure that short-circuits through a block:
+
+```kotlin
+fun processOrder(id: Int): Res<Order, AppError> = rail {
+    withContext("processing order $id") {
+        val order = fetchOrder(id).orFail()
+        val validated = validateOrder(order).orFail()
+        saveOrder(validated).orFail()
+    }
+}
+```
+
+Use the context-aware `orFail` overloads to attach a frame at the point of short-circuit:
+
+```kotlin
+val user = fetchUser(id).orFail("fetching user $id")
+val profile = loadProfile(user.id).orFail("loading profile") { SourceLocation("Service.kt", 55, "processUser") }
+```
+
+`orFail(context: String)` takes a plain `String` rather than a lambda — laziness is unnecessary since we're already on the Fail path, and a plain `String` avoids overload ambiguity when `E = String`.
+
+### Extended fold
+
+When you need the context frames at the consumption point, use the two-parameter `onFail`:
+
+```kotlin
+result.fold(
+    onOk = { value -> render(value) },
+    onFail = { error, frames -> renderError(error, frames) },
+)
+```
+
+### Reading Context
+
+```kotlin
+val res: Res<V, E> = ...
+
+res.contextChain()    // List<Frame> — empty on Ok, frames ordered innermost-first
+res.renderContext()   // Multi-line string: "Error: ...\n  0: frame0\n     at file:line\n  1: ..."
+res.contextSummary()  // Compact: "frame0 → frame1 → error.toString()"
+res.contextMap()      // Map<String, Any?> for structured/JSON logging
+```
+
+Searching for typed attachments:
+
+```kotlin
+// Attach structured data to a frame
+result.context { "processing $id" }
+// or with attachment:
+// result.contextFrame { Frame("processing $id", attachment = RequestMetadata(id, timestamp)) }
+
+val meta: RequestMetadata? = result.contextChain().findAttachment<RequestMetadata>()
+```
+
+### @TraceContext — KSP Code Generation
+
+The KSP module generates traced decorator classes automatically. Annotate an interface with `@TraceContext` and the processor generates `{Name}Traced` that wraps every `Res`-returning method with `.context(message, location)`:
+
+```kotlin
+@TraceContext
+interface UserRepository {
+    fun findById(id: Int): Res<User, DbError>
+    suspend fun save(user: User): Res<Unit, DbError>
+    fun count(): Int   // not wrapped — not Res-returning
+}
+// KSP generates UserRepositoryTraced
+```
+
+The generated class:
+
+```kotlin
+class UserRepositoryTraced(
+    private val delegate: UserRepository,
+) : UserRepository {
+    override fun findById(id: Int): Res<User, DbError> =
+        delegate.findById(id)
+            .context(
+                { "UserRepository.findById(id=$id)" },
+                { SourceLocation("UserRepository.kt", 3, "findById") },
+            )
+
+    override suspend fun save(user: User): Res<Unit, DbError> =
+        delegate.save(user)
+            .context(
+                { "UserRepository.save(user=$user)" },
+                { SourceLocation("UserRepository.kt", 4, "save") },
+            )
+
+    override fun count(): Int = delegate.count()
+}
+```
+
+Customising generation:
+
+```kotlin
+@TraceContext(suffix = "Instrumented")       // generates UserRepositoryInstrumented
+interface UserRepository { ... }
+
+@TraceContext
+interface AuthService {
+    @TraceMessage("authenticating user {username}")  // custom message template
+    fun login(username: String, @TraceExclude password: String): Res<Token, AuthError>
+    // generated: .context { "authenticating user $username" }  — password excluded
+}
+```
+
+`{paramName}` in `@TraceMessage` is replaced with the parameter value at runtime. `@TraceExclude` omits a parameter from the auto-generated message — use it for passwords, tokens, and other sensitive values.
+
 ## Common Pitfalls
 
 ### Do not use raw try/catch inside rail {} blocks
@@ -554,6 +690,7 @@ plugins {
 | Signature | Description |
 |---|---|
 | `fold(onOk: (V) -> T, onFail: (E) -> T): T` | Exhaustive match on both branches |
+| `fold(onOk: (V) -> T, onFail: (E, List<Frame>) -> T): T` | Exhaustive match with context frames (disambiguated by 2-param onFail) |
 | `map(transform: (V) -> U): Res<U, E>` | Transforms Ok value, Fail passes through |
 | `mapError(transform: (E) -> F): Res<V, F>` | Transforms Fail error, Ok passes through |
 | `recover(transform: (E) -> V): Res<V, Nothing>` | Converts Fail to Ok (infallible) |
@@ -607,6 +744,10 @@ plugins {
 | `Res<V, F>.orFail(mapping: ErrorMappingRail<F, E>): V` | Unwrap Ok or short-circuit with mapped error via reusable mapping |
 | `ensure(condition: Boolean, error: () -> E)` | Short-circuit if condition is false |
 | `ensureNotNull(value: V?, error: () -> E): V` | Short-circuit if value is null |
+| `Res<V, E>.orFail(context: String): V` | Unwrap Ok or short-circuit; attaches context frame to failure |
+| `Res<V, E>.orFail(context: String, location: () -> SourceLocation): V` | Unwrap Ok or short-circuit; attaches frame with source location |
+| `withContext(message: String, block: Rail<E>.() -> V): V` | Run block; appends context frame to any failure that short-circuits |
+| `withContext(message: String, location: () -> SourceLocation, block: Rail<E>.() -> V): V` | Same with source location |
 | `failMapping(mapError: (Exception) -> E): FailMappingRail<E>` | Create exception-catching scope |
 | `errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E>` | Create typed-error-mapping scope |
 | `mapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>` | Create combined scope |
@@ -670,6 +811,33 @@ Catches exceptions AND maps typed errors. Created via `mapping` inside `rail {}`
 | `tryMap(transform: (V) -> Res<U, E>): Res<List<U>, E>` | Fail-fast map through failable transform |
 | `tryForEach(action: (V) -> Res<*, E>): Res<Unit, E>` | Fail-fast side-effecting iteration |
 
+### Error Context Chain — Types
+
+| Type | Description |
+|---|---|
+| `Frame(message: String, attachment: Any? = null, location: SourceLocation? = null)` | One breadcrumb frame attached to a failure |
+| `SourceLocation(file: String, line: Int, function: String? = null)` | Source position; `toString()` renders as `"file:line in function"` |
+
+### Error Context Chain — Res Extensions
+
+| Signature | Description |
+|---|---|
+| `Res<V, E>.context(message: () -> String): Res<V, E>` | Appends frame on Fail, no-op on Ok; lambda only evaluated on Fail |
+| `Res<V, E>.context(message: () -> String, location: () -> SourceLocation): Res<V, E>` | Same with source location |
+| `Res<V, E>.contextChain(): List<Frame>` | Returns frames (index 0 = innermost); empty list on Ok |
+| `Res<V, E>.renderContext(): String` | Multi-line: error then numbered frames with locations |
+| `Res<V, E>.contextSummary(): String` | Compact: `"frame0 → frame1 → error.toString()"` |
+| `Res<V, E>.contextMap(): Map<String, Any?>` | Structured map for JSON logging |
+| `List<Frame>.findAttachment<T>(): T?` | First frame attachment that is an instance of `T` |
+
+### @TraceContext Annotations (result-kit-ksp)
+
+| Annotation | Target | Description |
+|---|---|---|
+| `@TraceContext(suffix: String = "Traced")` | Interface | Generates `{Name}{suffix}` decorator wrapping all Res-returning methods |
+| `@TraceMessage(value: String)` | Method | Replaces auto-generated message; `{paramName}` → `$paramName` at runtime |
+| `@TraceExclude` | Parameter | Omits parameter from auto-generated message (use for passwords, tokens, PII) |
+
 ### Annotations
 
 | Annotation | Description |
@@ -707,6 +875,14 @@ Both synchronous and suspend code use the same `rail {}` function. Because `rail
 ### CancellationException Handling
 
 All exception-catching paths (`failMapping`, `mapping`, `Rail.attempt`) rethrow `CancellationException` to preserve structured concurrency. This uses `kotlin.coroutines.cancellation.CancellationException` (the stdlib type) to avoid a runtime dependency on kotlinx-coroutines.
+
+### Error Context Chains
+
+Context frames are stored in the internal `Failure` sentinel as `List<Frame>`. The public error type `E` is unchanged — frames are an orthogonal concern. On the Ok path, `.context()` performs a single `instanceof` check and returns `this` immediately; lambdas are never evaluated. On the Fail path, a new `Failure` is allocated with the frame appended.
+
+Frame ordering is **append**: index 0 is the innermost frame (the first `.context()` call, closest to the error site). Outer wrappers append at the end. This matches the natural reading order when you traverse the frame list from index 0 outward.
+
+`FailException` also carries frames so they survive the throw/catch journey through `rail {}` boundaries without loss. All `Failure`-constructing sites (rail boundaries, `mapError`, mapping scopes) transfer frames from the incoming exception or existing `Failure`.
 
 ### No Runtime Dependencies
 

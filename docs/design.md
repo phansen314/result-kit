@@ -173,3 +173,35 @@ fun loadApp(): Res<App, AppError> = rail {
     App(config)
 }
 ```
+
+## Error Context Chains
+
+### Why frames are in Failure, not in a wrapper type
+
+The alternative — a wrapper like `Traced<Res<V, E>>` or an error wrapper like `WithContext<E>` — would change every function signature that participates in context tracking. That creates friction: you can't call a function returning `Res<V, E>` directly from a function returning `Traced<Res<V, E>>`, and consumers of `E` would have to unwrap it everywhere.
+
+Storing frames inside the internal `Failure` sentinel keeps the public API entirely unchanged. `Res<V, E>` stays `Res<V, E>`. Consumers who don't care about context are completely unaffected. Consumers who do care call `.contextChain()` or `.renderContext()` at the reporting boundary.
+
+### Zero cost on the Ok path
+
+`.context(message: () -> String)` performs one `instanceof Failure` check. On Ok, it returns `this` immediately. The lambda is never allocated and never evaluated. On Fail, one new `Failure` is allocated with the frame list extended by one entry.
+
+This means you can add `.context {}` calls liberally in hot code paths without worrying about Ok-path overhead.
+
+### Frame ordering: append, not prepend
+
+Frames are appended (index 0 = innermost/most-specific). This is the natural reading order: start at 0, work outward. It matches how call stacks are typically presented — the deepest frame first.
+
+Prepend would be more efficient (linked list, `O(1)` prepend vs `O(n)` list copy) but would require reversing the list for display. The current approach keeps the implementation simple and the frame list immediately usable without reversal.
+
+### orFail(context: String) — plain String, not lambda
+
+The context-aware `orFail` overloads take a plain `String` rather than `() -> String`. Two reasons:
+
+1. **Avoids overload ambiguity.** `{ "message" }` is a `() -> String` lambda, but when `E = String` it is also a valid `(String) -> String` (one-param). This is ambiguous with `orFail(mapError: (F) -> E)`. A plain `String` removes the ambiguity entirely.
+
+2. **Laziness is unnecessary.** We're already on the Fail path at `orFail` call time — the result is already a Fail before we evaluate the context string. There's nothing to defer.
+
+### FailException carries frames
+
+`FailException` extends `Throwable` for control flow. When `.orFail(context)` or `withContext` short-circuits, the frame is attached to the `FailException` before it's thrown. All `Failure`-constructing catch sites (in `RailBuilder`, `FailMappingRail`, `ErrorMappingRail`, `MappingRail`) transfer `e.frames` to the new `Failure`. This ensures frames survive the throw/catch journey intact, even across mapping and exception-catching scopes.
