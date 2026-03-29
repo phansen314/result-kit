@@ -406,6 +406,108 @@ This example demonstrates:
 - Separate `failMapping` scopes for database and email, each with their own error mapping
 - The entire flow reads top-to-bottom as straight-line code despite having multiple failure modes
 
+## Error Context Chains
+
+When a failure propagates through several layers, it can be hard to tell what operations were in flight. Context chains let you attach breadcrumb frames to a failure as it unwinds — without changing the error type `E`.
+
+### Basic usage
+
+```kotlin
+fun loadUserProfile(id: Int): Res<Profile, AppError> =
+    userRepo.findById(id)
+        .context { "loading profile for user $id" }
+
+fun handleRequest(userId: Int): Res<Response, AppError> =
+    loadUserProfile(userId)
+        .context { "handling request for user $userId" }
+```
+
+On the Ok path `.context {}` is a no-op — the lambda is never evaluated.
+
+The frame list is ordered **innermost-first**: index 0 is the frame closest to the original error. In the example above, if `userRepo.findById` fails, the frame list would be:
+
+```
+0: "loading profile for user 42"
+1: "handling request for user 42"
+```
+
+### Inside rail {}
+
+`withContext` wraps a block and attaches a frame to any failure that short-circuits out of it:
+
+```kotlin
+fun processOrder(id: Int): Res<Order, AppError> = rail {
+    withContext("processing order $id") {
+        val order = fetchOrder(id).orFail()
+        val validated = validateOrder(order).orFail()
+        saveOrder(validated).orFail()
+    }
+}
+```
+
+The context-aware `orFail` overloads attach a frame at the point of short-circuit:
+
+```kotlin
+val user = fetchUser(id).orFail("fetching user $id")
+```
+
+### Reading context at the boundary
+
+```kotlin
+when (val result = processOrder(id)) {
+    // fold with frames
+    else -> result.fold(
+        onOk = { order -> respond(order) },
+        onFail = { error, frames ->
+            logger.error(result.renderContext())
+            respond(error)
+        },
+    )
+}
+
+// or extract individually
+val frames: List<Frame> = result.contextChain()
+val summary: String = result.contextSummary()   // "frame0 → frame1 → error.toString()"
+val logMap: Map<String, Any?> = result.contextMap()  // for structured/JSON logging
+```
+
+### @TraceContext — generating traced wrappers automatically
+
+For service layers with many `Res`-returning methods, the KSP module generates the `.context(...)` calls for you. Annotate an interface with `@TraceContext`:
+
+```kotlin
+import tech.codingzen.resultkit.context.TraceContext
+import tech.codingzen.resultkit.context.TraceInclude
+import tech.codingzen.resultkit.context.TraceMessage
+
+@TraceContext
+interface AuthService {
+    // Default: names only — safe, no values emitted
+    // generated: "AuthService.login(username, password)"
+    fun login(username: String, password: String): Res<Token, AuthError>
+
+    // @TraceInclude opts a param's value in explicitly
+    fun findById(@TraceInclude id: Int): Res<User, AuthError>
+    // generated: "AuthService.findById(id=$id)"
+
+    // @TraceMessage for full custom control
+    @TraceMessage("authenticating {username}")
+    fun authenticate(username: String, password: String): Res<Token, AuthError>
+
+    fun logout(token: String): Res<Unit, AuthError>
+}
+```
+
+KSP generates `AuthServiceTraced`. Wire it up:
+
+```kotlin
+val auth: AuthService = AuthServiceTraced(delegate = realAuthService)
+```
+
+Every call to `auth.login(...)` now automatically attaches a context frame with the message `"authenticating user $username"` (password excluded) and a `SourceLocation` pointing to the interface declaration. Non-`Res` methods are delegated as-is.
+
+See the [API Reference](../README.md#tracecontent-annotations-result-kit-ksp) for annotation options.
+
 ## Next Steps
 
 - [API Reference](../README.md#api-reference) — complete signature tables for every public symbol

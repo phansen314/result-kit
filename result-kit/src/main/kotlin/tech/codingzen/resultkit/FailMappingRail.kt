@@ -46,7 +46,7 @@ public inline operator fun <V, E> FailMappingRail<E>.invoke(
     // which lets FailException pass through to the outer rail {}.)
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
-        Res.failure(e.error as E)
+        Res(Failure(e.error, e.frames))
     // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e

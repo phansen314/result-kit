@@ -5,14 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-./gradlew build          # Compile + test
-./gradlew test           # Run tests only
-./gradlew compileKotlin  # Compile only (no tests)
-./gradlew test --tests "tech.codingzen.resultkit.ResTest"           # Single test class
-./gradlew test --tests "tech.codingzen.resultkit.ResTest.testName"  # Single test method
+./gradlew build                          # Compile + test (all modules)
+./gradlew :result-kit:test               # Core module tests only
+./gradlew :result-kit-ksp:test           # KSP module tests only
+./gradlew :result-kit:test --tests "tech.codingzen.resultkit.ResTest"           # Single test class
+./gradlew :result-kit:test --tests "tech.codingzen.resultkit.ResTest.testName"  # Single test method
 ```
 
 No linter configured. Code quality is enforced by `explicitApi()` (all public APIs need explicit visibility and return types) and the Kotlin compiler.
+
+## Project Structure
+
+Multi-module project (`rootProject.name = "result-kit-core"`):
+- `result-kit/` — core library (zero runtime dependencies)
+- `result-kit-ksp/` — KSP annotation processor (depends on `result-kit`; compile-time only for consumers)
 
 ## Architecture
 
@@ -32,6 +38,8 @@ Inside `rail {}`, the receiver is `Rail<E>` which provides:
 - `Res<V, E>.orFail(): V` — unwrap or short-circuit
 - `fail(e)`, `ensure(...)`, `ensureNotNull(...)` — explicit short-circuit
 - `orFail(mapping)` — inside `rail {}`, unwrap `Res<V, D>` using a reusable `ErrorMappingRail`. Preferred over `invoke(res)` for consistency with other `orFail` variants.
+- `orFail(context: String): V` / `orFail(context: String, location: () -> SourceLocation): V` — unwrap with context frame attached to failure. Plain `String` (not lambda) avoids overload ambiguity when `E = String`.
+- `withContext(message, block)` / `withContext(message, location, block)` — wraps a sub-block; catches `FailException`, appends a frame, rethrows.
 - Factory methods for mapping scopes: `failMapping()`, `errorMapping()`, `mapping()`
 
 ### Mapping scopes (FailMappingRail.kt, ErrorMappingRail.kt, MappingRail.kt)
@@ -62,6 +70,30 @@ Reusable scopes created inside `rail {}` that handle exception catching and/or t
   - `Validator<F>.orFail(mapErrors)` — flush imperative validator into rail
 - `Rail.Companion.validation<F, E>(mapErrors)` — top-level ValidationMapping factory
 
+### Error context chains (context/)
+
+Opt-in error context — frames are stored inside the internal `Failure` sentinel; the public `E` type is unchanged.
+
+- `Frame(message, attachment?, location?)` — one context entry
+- `SourceLocation(file, line, function?)` — toString: `"file:line in function"`
+- `Failure` carries `List<Frame>`; frames thread through all `FailException`/`Failure` boundaries
+- Frame ordering: **append** — index 0 is innermost (first `.context()` call, closest to the error)
+- `Res<V, E>.context(message: () -> String): Res<V, E>` — no-op on Ok, appends frame on Fail; lambdas only evaluated on Fail path
+- `Res<V, E>.context(message: () -> String, location: () -> SourceLocation): Res<V, E>`
+- Extended `fold(onOk, onFail: (E, List<Frame>) -> T)` — disambiguated by 2-param `onFail`
+- Rendering: `contextChain()`, `renderContext()`, `contextSummary()`, `contextMap()`, `List<Frame>.findAttachment<T>()`
+
+### KSP module (result-kit-ksp)
+
+`@TraceContext` on an interface → KSP generates `{Name}Traced` decorator:
+- Constructor-injects a delegate implementing the interface
+- Every `Res`-returning method: `delegate.method(args).context({ "Name.method(p=$p)" }, { SourceLocation(...) })`
+- Non-`Res` methods: plain delegation, no wrapping
+- `@TraceContext(suffix = "Wrapped")` — custom class name suffix (default `"Traced"`)
+- `@TraceMessage("loading user {id}")` on a method — replaces auto-generated message; `{param}` → `$param`
+- `@TraceInclude` on a parameter — opts its value into the auto-generated message (values excluded by default)
+- `suspend` and type parameters are preserved in the generated class
+
 ### Composition (Zip.kt, Iterable.kt)
 
 - `zip(...)` — fail-fast sequential combination of up to 4 results
@@ -77,6 +109,8 @@ Reusable scopes created inside `rail {}` that handle exception catching and/or t
 - **Scope allocation per `rail {}` call is acceptable.** Don't flag it in reviews.
 - **`failMapping { mapError }` + `scope { block }` pattern is intentional.** Don't collapse scope creation and invocation into a single call.
 - **Scope interfaces are standalone.** Don't create inheritance hierarchies between scope types; duplicate methods instead.
+- **Frame ordering is append (not prepend).** Index 0 = innermost/most-specific context. `orFail(context)` and `.context()` both append.
+- **`orFail(context)` takes a plain `String`, not a lambda.** Avoids overload ambiguity with `orFail(mapError: (F) -> E)` when `E = String`. Laziness is unnecessary since we're already on the Fail path.
 
 ## Kotlin Compiler Settings
 

@@ -6,12 +6,16 @@ package tech.codingzen.resultkit
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
+import tech.codingzen.resultkit.context.Frame
 
 @PublishedApi
-internal class Failure(@JvmField val error: Any?) {
-    override fun equals(other: Any?) = other is Failure && other.error == error
-    override fun hashCode() = (error?.hashCode() ?: 0) xor 0x4641494C // "FAIL" in ASCII — prevents ok(null) / failure(null) hash collision
-    override fun toString() = "Fail($error)"
+internal class Failure(
+    @JvmField val error: Any?,
+    @JvmField val frames: List<Frame> = emptyList(),
+) {
+    override fun equals(other: Any?) = other is Failure && other.error == error && other.frames == frames
+    override fun hashCode() = ((error?.hashCode() ?: 0) xor 0x4641494C) * 31 + frames.hashCode()
+    override fun toString() = if (frames.isEmpty()) "Fail($error)" else "Fail($error, frames=$frames)"
 }
 
 /**
@@ -135,7 +139,7 @@ public inline fun <V, E, U> Res<V, E>.map(transform: (V) -> U): Res<U, E> {
  */
 public inline fun <V, E, F> Res<V, E>.mapError(transform: (E) -> F): Res<V, F> {
     contract { callsInPlace(transform, InvocationKind.AT_MOST_ONCE) }
-    return if (inlineValue is Failure) Res(Failure(transform(inlineValue.error as E)))
+    return if (inlineValue is Failure) Res(Failure(transform(inlineValue.error as E), inlineValue.frames))
     else Res(inlineValue)
 }
 

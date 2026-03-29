@@ -28,6 +28,6 @@ public inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E> {
     // No CancellationException guard needed — we only catch FailException (a Throwable, not Exception)
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
-        Res.failure(e.error as E)
+        Res(Failure(e.error, e.frames))
     }
 }
