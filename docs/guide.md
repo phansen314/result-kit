@@ -138,6 +138,8 @@ Here's what happens:
 
 The `io` scope is reusable — use it for every throwing call in the block. `CancellationException` is always rethrown to preserve coroutine structured concurrency.
 
+> **Heads up:** The same `FailMappingRail` instance behaves differently depending on context. Inside `rail {}`, invoking it returns the unwrapped value and short-circuits on error. At the top level, the same call returns `Res<V, E>` instead. The compiler enforces this — a return-type mismatch is a compile error. See [Top-Level Usage](../README.md#top-level-usage-outside-rail--blocks) for details.
+
 For one-off exception catching without mapping, use `Rail.attempt`:
 
 ```kotlin

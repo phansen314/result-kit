@@ -91,6 +91,9 @@ Result-Kit has four scope types, each standalone with no inheritance between the
 | `FailMappingRail<E>` | Exception translation | Yes | No |
 | `ErrorMappingRail<D, E>` | Typed error translation | No | Yes |
 | `MappingRail<D, E>` | Both | Yes | Yes |
+| `ValidationMapping<F, E>` | Error accumulation + mapping | No | Yes |
+
+**Why no `Rail` suffix on `ValidationMapping`?** The `*Rail` types all create a `Rail<E>()` scope internally in their top-level invoke. `ValidationMapping` creates a `Validator<F>()` instead — it accumulates errors rather than short-circuiting. The name reflects this: it maps validation errors, not rail errors.
 
 **Why no inheritance?** The scopes have different type parameters and different invoke signatures. An inheritance hierarchy would require complex generics, and the overlapping methods would need to be carefully overridden. Duplicating the few shared methods across standalone classes is simpler, produces clearer error messages, and avoids constraining future changes.
 
