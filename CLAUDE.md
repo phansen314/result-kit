@@ -20,7 +20,7 @@ Result-kit is a zero-dependency Kotlin library for Railway-Oriented Programming 
 
 ### Core type: `Res<V, E>` (Res.kt)
 
-An inline value class (`@JvmInline value class`) representing Ok or Failure. Ok values are stored unboxed; failures wrap the error in an internal `Failure` sentinel. Covariant in both `V` and `E`. Factories live on the companion: `Res.ok()`, `Res.failure()`, `Res.attempt()`.
+An inline value class (`@JvmInline value class`) representing Ok or Failure. Ok values are stored unboxed; failures wrap the error in an internal `Failure` sentinel. Covariant in both `V` and `E`. Factories live on the companion: `Res.ok()`, `Res.failure()`. `Rail.attempt()` is a convenience for exception-catching.
 
 ### DSL entry point: `rail {}` (RailBuilder.kt)
 
@@ -71,11 +71,11 @@ Reusable scopes created inside `rail {}` that handle exception catching and/or t
 ## Design Decisions
 
 - **Zero runtime dependencies.** Don't add any. Recommend tools to consumers in docs only.
-- **Companion factories only.** `ok()`/`failure()`/`attempt()` live on `Res.Companion`, not as top-level functions.
+- **Companion factories only.** `ok()`/`failure()` live on `Res.Companion`; `attempt()`/`failMapping()`/`mapping()` live on `Rail.Companion`. None are top-level functions.
 - **No `flatMap` on `Res`.** The DSL (`rail {}` + `orFail()`) replaces `flatMap` chaining — this is intentional.
-- **`FailException` extends `Throwable`, not `Exception`.** This is critical — `catching {}` blocks inside `rail {}` must not intercept control flow. Never catch `Throwable` inside `rail {}`.
+- **`FailException` extends `Throwable`, not `Exception`.** This is critical — `catch (e: Exception)` blocks inside `rail {}` must not intercept control flow. Never catch `Throwable` inside `rail {}`.
 - **Scope allocation per `rail {}` call is acceptable.** Don't flag it in reviews.
-- **`mapping{}.catching{}` pattern is intentional.** Don't collapse to `catching(mapError) { block }`.
+- **`failMapping { mapError }` + `scope { block }` pattern is intentional.** Don't collapse scope creation and invocation into a single call.
 - **Scope interfaces are standalone.** Don't create inheritance hierarchies between scope types; duplicate methods instead.
 
 ## Kotlin Compiler Settings
