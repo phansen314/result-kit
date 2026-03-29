@@ -49,7 +49,7 @@ public inline operator fun <V, D, E> ErrorMappingRail<D, E>.invoke(
         Res.ok(scope.block())
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
-        try { Res.failure(mapError(e.error as D)) } catch (me: Exception) {
+        try { Res(Failure(mapError(e.error as D), e.frames)) } catch (me: Exception) {
             if (me is kotlin.coroutines.cancellation.CancellationException) throw me
             throw ErrorMapperException(e, me)
         }

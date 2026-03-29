@@ -59,7 +59,7 @@ public inline operator fun <V, D, E> MappingRail<D, E>.invoke(
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
         @Suppress("UNCHECKED_CAST")
-        Res.failure(e.error as E)
+        Res(Failure(e.error as E, e.frames))
     // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e

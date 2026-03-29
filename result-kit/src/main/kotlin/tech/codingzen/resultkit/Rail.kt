@@ -188,6 +188,90 @@ public class Rail<E> @PublishedApi internal constructor() {
         }
     }
 
+    // -- Context DSL --
+
+    /**
+     * Unwraps the Ok value, or short-circuits this rail with a context message prepended to the
+     * Fail's frame chain.
+     *
+     * The [context] lambda is only invoked when this result is Fail — zero cost on the Ok path.
+     * Disambiguated from `orFail(mapError: (F) -> E)` (one-param lambda) by taking a plain
+     * [String] rather than a lambda. Eagerness is fine — this branch is only reached on Fail.
+     *
+     * ```
+     * val user = fetchUser(id).orFail("fetching user id=$id")
+     * ```
+     */
+    public fun <V> Res<V, E>.orFail(context: String): V {
+        if (inlineValue !is Failure) return inlineValue as V
+        val frame = tech.codingzen.resultkit.context.Frame(message = context)
+        throw FailException(inlineValue.error, this@Rail, inlineValue.frames + frame)
+    }
+
+    /**
+     * Unwraps the Ok value, or short-circuits this rail with a context message and source location
+     * appended to the Fail's frame chain.
+     *
+     * The [location] lambda is only invoked when this result is Fail.
+     */
+    public inline fun <V> Res<V, E>.orFail(
+        context: String,
+        location: () -> tech.codingzen.resultkit.context.SourceLocation,
+    ): V {
+        if (inlineValue !is Failure) return inlineValue as V
+        val frame = tech.codingzen.resultkit.context.Frame(
+            message = context,
+            location = location(),
+        )
+        throw FailException(inlineValue.error, this@Rail, inlineValue.frames + frame)
+    }
+
+    /**
+     * Executes [block] within this rail's scope. On short-circuit, prepends [message] as a context
+     * frame before re-throwing, so the failure carries the additional context.
+     *
+     * ```
+     * rail<Dashboard, AppError> {
+     *     val user = withContext("loading dashboard for user $userId") {
+     *         fetchUser(userId).orFail()
+     *     }
+     * }
+     * ```
+     */
+    public inline fun <V> withContext(
+        message: String,
+        block: Rail<E>.() -> V,
+    ): V {
+        try {
+            return block()
+        } catch (e: FailException) {
+            val frame = tech.codingzen.resultkit.context.Frame(message = message)
+            throw FailException(e.error, e.scope, e.frames + frame)
+        }
+    }
+
+    /**
+     * Executes [block] within this rail's scope. On short-circuit, prepends a context frame with
+     * [message] and a source [location] before re-throwing.
+     *
+     * The [location] lambda is only invoked on the Fail path.
+     */
+    public inline fun <V> withContext(
+        message: String,
+        location: () -> tech.codingzen.resultkit.context.SourceLocation,
+        block: Rail<E>.() -> V,
+    ): V {
+        try {
+            return block()
+        } catch (e: FailException) {
+            val frame = tech.codingzen.resultkit.context.Frame(
+                message = message,
+                location = location(),
+            )
+            throw FailException(e.error, e.scope, e.frames + frame)
+        }
+    }
+
     public companion object {
         /** Creates a top-level [FailMappingRail] for catching exceptions and mapping them to typed errors. */
         public fun <E> failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
@@ -231,7 +315,11 @@ public class Rail<E> @PublishedApi internal constructor() {
 // in Rail.invoke and FailMappingRail.invoke use catch(Exception) to distinguish
 // mapper failures from rail control flow. Changing this hierarchy breaks that silently.
 @PublishedApi
-internal class FailException(val error: Any?, val scope: Any) : Throwable(
+internal class FailException(
+    val error: Any?,
+    val scope: Any,
+    val frames: List<tech.codingzen.resultkit.context.Frame> = emptyList(),
+) : Throwable(
     "result-kit: FailException escaped a rail{} block — avoid catching Throwable inside rail{} blocks"
 ) {
     override fun fillInStackTrace(): Throwable = this
