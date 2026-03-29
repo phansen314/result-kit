@@ -129,6 +129,65 @@ public class Rail<E> @PublishedApi internal constructor() {
             }
         }
 
+    /** Creates a [ValidationMapping] for accumulating validation errors and flushing them into this rail. */
+    public fun <F> validation(mapErrors: (List<F>) -> E): ValidationMapping<F, E> =
+        ValidationMapping(mapErrors)
+
+    /**
+     * Member extension: runs [block] on a [Validator], accumulating errors.
+     * If any errors accumulated, maps them via [ValidationMapping.mapErrors]
+     * and short-circuits this rail.
+     *
+     * Follows the same invoke pattern as [FailMappingRail] — the member extension
+     * wins over the top-level invoke inside a [rail] block.
+     */
+    public inline operator fun <F> ValidationMapping<F, @UnsafeVariance E>.invoke(
+        block: Validator<F>.() -> Unit
+    ) {
+        val v = Validator<F>()
+        v.block()
+        if (v.hasErrors) {
+            val errors = v.errors()
+            try { fail(mapErrors(errors)) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(
+                    IllegalStateException("Validation failed with ${errors.size} error(s)"),
+                    me
+                )
+            }
+        }
+    }
+
+    /**
+     * Member extension: flushes a [Validator]'s accumulated errors into this rail.
+     * If the validator has errors, maps them via [mapErrors] and short-circuits.
+     *
+     * For the imperative [Validator] pattern where ensure calls are interleaved
+     * with other code:
+     * ```
+     * rail<User, AppError> {
+     *     val v = validator<String>()
+     *     v.ensure(name.isNotBlank()) { "Name required" }
+     *     val domain = email.substringAfter('@')
+     *     v.ensure(domain.contains('.')) { "Invalid domain" }
+     *     v.orFail { errors -> AppError.Validation(errors) }
+     *     User(name, age, email)
+     * }
+     * ```
+     */
+    public inline fun <F> Validator<F>.orFail(mapErrors: (List<F>) -> E) {
+        if (hasErrors) {
+            val errors = errors()
+            try { this@Rail.fail(mapErrors(errors)) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(
+                    IllegalStateException("Validation failed with ${errors.size} error(s)"),
+                    me
+                )
+            }
+        }
+    }
+
     public companion object {
         /** Creates a top-level [FailMappingRail] for catching exceptions and mapping them to typed errors. */
         public fun <E> failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
@@ -161,6 +220,10 @@ public class Rail<E> @PublishedApi internal constructor() {
             onError: (D) -> E,
             onException: (Exception) -> E,
         ): MappingRail<D, E> = MappingRail(onError, onException)
+
+        /** Creates a top-level [ValidationMapping] for accumulating validation errors. */
+        public fun <F, E> validation(mapErrors: (List<F>) -> E): ValidationMapping<F, E> =
+            ValidationMapping(mapErrors)
     }
 }
 

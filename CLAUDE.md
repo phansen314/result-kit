@@ -38,6 +38,30 @@ Inside `rail {}`, the receiver is `Rail<E>` which provides:
 
 Reusable scopes created inside `rail {}` that handle exception catching and/or typed-error mapping. They behave differently at top-level (return `Res`) vs. inside a `rail {}` block (return unwrapped value, short-circuit on failure). The `@RailDsl` marker annotation prevents implicit access to outer `Rail` receivers in nested scopes.
 
+### Validation (Validator.kt, ValidationMapping.kt)
+
+- `Validator<E>` — mutable error accumulator, does NOT extend Rail
+  - `fail(error)` — add error directly
+  - `ensure(condition) { error }` — add error if condition false (does not short-circuit)
+  - `addAll(Iterable<E>)` — bulk add (for bridging Spring/JSR-303 errors)
+  - `Res<V, E>.check()` — collect Fail error, discard value
+  - `Res<V, F>.check(mapError)` — collect mapped Fail error, discard value
+  - `Res<V, E>.checkOrNull(): V?` — collect Fail error and return null, or return Ok value
+  - `Res<V, F>.checkOrNull(mapError): V?` — collect mapped Fail error and return null, or return Ok value
+  - `hasErrors: Boolean` — check if any errors accumulated
+  - `errors(): List<E>` — snapshot of accumulated errors
+  - `toRes(): Res<Unit, List<E>>` — Ok(Unit) if clean, Fail(errors) if not
+- `validation { block }` — scoped block on Validator, returns `Res<Unit, List<E>>`
+- `validator<E>()` — factory for imperative use
+- `ValidationMapping<F, E>` — reusable mapper (like FailMappingRail)
+  - Top-level invoke: runs block, returns `Res<Unit, E>` with mapped errors
+  - Inside `rail {}`: member extension wins, short-circuits rail on errors
+- Rail member extensions:
+  - `validation<F>(mapErrors)` — factory for ValidationMapping
+  - `ValidationMapping.invoke(block)` — run validation block, flush into rail
+  - `Validator<F>.orFail(mapErrors)` — flush imperative validator into rail
+- `Rail.Companion.validation<F, E>(mapErrors)` — top-level ValidationMapping factory
+
 ### Composition (Zip.kt, Iterable.kt)
 
 - `zip(...)` — fail-fast sequential combination of up to 4 results
