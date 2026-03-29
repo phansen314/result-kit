@@ -477,13 +477,22 @@ For service layers with many `Res`-returning methods, the KSP module generates t
 
 ```kotlin
 import tech.codingzen.resultkit.context.TraceContext
-import tech.codingzen.resultkit.context.TraceExclude
+import tech.codingzen.resultkit.context.TraceInclude
 import tech.codingzen.resultkit.context.TraceMessage
 
 @TraceContext
 interface AuthService {
-    @TraceMessage("authenticating user {username}")
-    fun login(username: String, @TraceExclude password: String): Res<Token, AuthError>
+    // Default: names only — safe, no values emitted
+    // generated: "AuthService.login(username, password)"
+    fun login(username: String, password: String): Res<Token, AuthError>
+
+    // @TraceInclude opts a param's value in explicitly
+    fun findById(@TraceInclude id: Int): Res<User, AuthError>
+    // generated: "AuthService.findById(id=$id)"
+
+    // @TraceMessage for full custom control
+    @TraceMessage("authenticating {username}")
+    fun authenticate(username: String, password: String): Res<Token, AuthError>
 
     fun logout(token: String): Res<Unit, AuthError>
 }

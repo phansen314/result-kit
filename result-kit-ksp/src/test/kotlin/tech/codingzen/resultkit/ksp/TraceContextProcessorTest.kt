@@ -104,11 +104,12 @@ class TraceContextProcessorTest {
     }
 
     @Test
-    fun `auto-generated message includes class name, method name, and params`() {
+    fun `auto-generated message includes class name, method name, and param names (no values)`() {
         val result = compile(simpleInterfaceSource)
         val src = result.generatedSource("SimpleRepoTraced")
-        // findById(id: Int) should produce "SimpleRepo.findById(id=$id)"
-        assertTrue(src.contains("SimpleRepo.findById(id=\$id)"), "Got: $src")
+        // findById(id: Int) should produce "SimpleRepo.findById(id)" — name only, no value by default
+        assertTrue(src.contains("SimpleRepo.findById(id)"), "Got: $src")
+        assertTrue(!src.contains("\$id"), "Param value should not appear by default, got: $src")
     }
 
     @Test
@@ -151,23 +152,24 @@ class TraceContextProcessorTest {
     }
 
     @Test
-    fun `TraceExclude omits parameter from message`() {
-        val source = SourceFile.kotlin("ExcludeParam.kt", """
+    fun `TraceInclude opts a parameter value into the message`() {
+        val source = SourceFile.kotlin("IncludeParam.kt", """
             package tech.codingzen.resultkit.ksp.test
             import tech.codingzen.resultkit.Res
             import tech.codingzen.resultkit.context.TraceContext
-            import tech.codingzen.resultkit.context.TraceExclude
+            import tech.codingzen.resultkit.context.TraceInclude
 
             @TraceContext
-            interface AuthSvc {
-                fun login(username: String, @TraceExclude password: String): Res<String, String>
+            interface UserRepo {
+                fun findById(@TraceInclude id: Int, version: Int): Res<String, String>
             }
         """.trimIndent())
         val result = compile(source)
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
-        val src = result.generatedSource("AuthSvcTraced")
-        assertTrue(src.contains("username=\$username"), "Got: $src")
-        assertTrue(!src.contains("password="), "Excluded param should not appear in message, got: $src")
+        val src = result.generatedSource("UserRepoTraced")
+        assertTrue(src.contains("id=\$id"), "TraceInclude param should emit value, got: $src")
+        assertTrue(!src.contains("\$version"), "Non-annotated param should not emit value, got: $src")
+        assertTrue(src.contains("version"), "Non-annotated param name should still appear, got: $src")
     }
 
     @Test

@@ -91,7 +91,7 @@ Opt-in error context — frames are stored inside the internal `Failure` sentine
 - Non-`Res` methods: plain delegation, no wrapping
 - `@TraceContext(suffix = "Wrapped")` — custom class name suffix (default `"Traced"`)
 - `@TraceMessage("loading user {id}")` on a method — replaces auto-generated message; `{param}` → `$param`
-- `@TraceExclude` on a parameter — omits it from the auto-generated message (e.g. passwords)
+- `@TraceInclude` on a parameter — opts its value into the auto-generated message (values excluded by default)
 - `suspend` and type parameters are preserved in the generated class
 
 ### Composition (Zip.kt, Iterable.kt)

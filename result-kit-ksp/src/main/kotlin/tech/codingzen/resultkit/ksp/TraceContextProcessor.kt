@@ -160,13 +160,12 @@ internal class TraceContextProcessor(
             return "\"$interpolated\""
         }
 
-        // Auto-generate: "ClassName.method(p1=$p1, p2=$p2)"
-        val includedParams = fn.parameters.filter { param ->
-            param.annotations.none { it.shortName.asString() == "TraceExclude" }
-        }
-        val paramParts = includedParams.joinToString(", ") { param ->
+        // Auto-generate: "ClassName.method(p1, p2=$p2, p3)"
+        // Values are omitted by default; opt in per-parameter with @TraceInclude.
+        val paramParts = fn.parameters.joinToString(", ") { param ->
             val name = param.name?.asString() ?: "_"
-            "$name=\$$name"
+            val includeValue = param.annotations.any { it.shortName.asString() == "TraceInclude" }
+            if (includeValue) "$name=\$$name" else name
         }
         return "\"$ifaceName.$fnName($paramParts)\""
     }

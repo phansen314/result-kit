@@ -46,15 +46,20 @@ public annotation class TraceContext(
 public annotation class TraceMessage(val value: String)
 
 /**
- * Excludes a parameter from the auto-generated context message.
+ * Opts a parameter into the auto-generated context message value.
  *
- * Use on sensitive parameters (passwords, tokens, PII) that should not appear in logs:
+ * By default, parameter names are included but values are not — only the name appears,
+ * which is enough to identify which overload was called without leaking data. Annotate
+ * a parameter with `@TraceInclude` to also emit its value:
  * ```kotlin
- * fun authenticate(username: String, @TraceExclude password: String): Res<Token, AuthError>
- * // generates: .context { "UserService.authenticate(username=$username)" }
- * // (password is omitted)
+ * fun findById(@TraceInclude id: Int): Res<User, DbError>
+ * // generates: .context { "UserRepository.findById(id=$id)" }
+ *
+ * fun authenticate(username: String, password: String): Res<Token, AuthError>
+ * // generates: .context { "AuthService.authenticate(username, password)" }
+ * // (neither value is emitted by default)
  * ```
  */
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.SOURCE)
-public annotation class TraceExclude
+public annotation class TraceInclude

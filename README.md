@@ -514,13 +514,19 @@ interface UserRepository { ... }
 
 @TraceContext
 interface AuthService {
-    @TraceMessage("authenticating user {username}")  // custom message template
-    fun login(username: String, @TraceExclude password: String): Res<Token, AuthError>
-    // generated: .context { "authenticating user $username" }  — password excluded
+    // Default: names only — "AuthService.login(username, password)"
+    fun login(username: String, password: String): Res<Token, AuthError>
+
+    // @TraceInclude opts a single param's value in
+    fun findById(@TraceInclude id: Int): Res<User, AuthError>
+    // generated: "AuthService.findById(id=$id)"
+
+    @TraceMessage("authenticating user {username}")  // custom template, full control
+    fun authenticate(username: String, password: String): Res<Token, AuthError>
 }
 ```
 
-`{paramName}` in `@TraceMessage` is replaced with the parameter value at runtime. `@TraceExclude` omits a parameter from the auto-generated message — use it for passwords, tokens, and other sensitive values.
+Parameter values are **excluded by default** — the message shows param names only, which is sufficient to identify the overload without leaking data. `@TraceInclude` opts a specific param's value in. `@TraceMessage` replaces the auto-generated message entirely; `{paramName}` placeholders are replaced with the runtime value.
 
 ## Common Pitfalls
 
@@ -836,7 +842,7 @@ Catches exceptions AND maps typed errors. Created via `mapping` inside `rail {}`
 |---|---|---|
 | `@TraceContext(suffix: String = "Traced")` | Interface | Generates `{Name}{suffix}` decorator wrapping all Res-returning methods |
 | `@TraceMessage(value: String)` | Method | Replaces auto-generated message; `{paramName}` → `$paramName` at runtime |
-| `@TraceExclude` | Parameter | Omits parameter from auto-generated message (use for passwords, tokens, PII) |
+| `@TraceInclude` | Parameter | Opts a parameter's value into the auto-generated message (values are excluded by default) |
 
 ### Annotations
 
