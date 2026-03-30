@@ -56,8 +56,21 @@ internal class TraceContextProcessor(
         val packageName = iface.packageName.asString()
         val qualifiedIfaceName = iface.qualifiedName?.asString() ?: "$packageName.$ifaceName"
 
+        val ifaceTypeParams = iface.typeParameters
+        val ifaceTypeParamClause = if (ifaceTypeParams.isEmpty()) "" else {
+            val params = ifaceTypeParams.joinToString(", ") { tp ->
+                val name = tp.name.asString()
+                val bounds = tp.bounds.toList().filterNot { it.isImplicitAnyBound() }
+                if (bounds.isEmpty()) name
+                else "$name : ${bounds.joinToString(" & ") { it.resolve().toTypeName() }}"
+            }
+            "<$params>"
+        }
+        val ifaceTypeArgClause = if (ifaceTypeParams.isEmpty()) "" else
+            "<${ifaceTypeParams.joinToString(", ") { it.name.asString() }}>"
+
         val file = codeGenerator.createNewFile(
-            dependencies = Dependencies(aggregating = false, iface.containingFile!!),
+            dependencies = Dependencies(aggregating = true, iface.containingFile!!),
             packageName = packageName,
             fileName = wrapperName,
         )
@@ -70,9 +83,9 @@ internal class TraceContextProcessor(
             out.writeln("import tech.codingzen.resultkit.context.SourceLocation")
             out.writeln("import tech.codingzen.resultkit.context.context")
             out.writeln()
-            out.writeln("public class $wrapperName(")
-            out.writeln("    private val delegate: $qualifiedIfaceName,")
-            out.writeln(") : $qualifiedIfaceName {")
+            out.writeln("public class $wrapperName$ifaceTypeParamClause(")
+            out.writeln("    private val delegate: $qualifiedIfaceName$ifaceTypeArgClause,")
+            out.writeln(") : $qualifiedIfaceName$ifaceTypeArgClause {")
             out.writeln()
 
             for (fn in iface.getAllFunctions()) {
@@ -95,7 +108,12 @@ internal class TraceContextProcessor(
         val isSuspend = fn.modifiers.contains(Modifier.SUSPEND)
 
         // Build type parameter clause
-        val typeParams = fn.typeParameters.joinToString(", ") { it.name.asString() }
+        val typeParams = fn.typeParameters.joinToString(", ") { tp ->
+            val name = tp.name.asString()
+            val bounds = tp.bounds.toList().filterNot { it.isImplicitAnyBound() }
+            if (bounds.isEmpty()) name
+            else "$name : ${bounds.joinToString(" & ") { it.resolve().toTypeName() }}"
+        }
         val typeParamClause = if (typeParams.isNotEmpty()) "<$typeParams>" else ""
 
         // Build parameter list
@@ -124,19 +142,26 @@ internal class TraceContextProcessor(
             val ifaceName = iface.simpleName.asString()
             val contextMsg = buildContextMessage(fn, ifaceName)
 
-            // Source location from KSP declaration
-            val location = fn.location
-            val (file, line) = if (location is FileLocation) {
-                Pair(location.filePath.substringAfterLast('/'), location.lineNumber)
-            } else {
-                Pair("$ifaceName.kt", 0)
-            }
+            // Source location from KSP declaration.
+            // Derive a package-relative path (e.g. "com/example/Repo.kt") so the location
+            // is unambiguous in mono-repos with identically-named files in different modules.
+            // If KSP can't resolve a FileLocation (synthetic/binary/Java sources), omit the
+            // location lambda entirely rather than emitting a misleading line=0.
+            val fileLocation = fn.location as? FileLocation
 
             out.writeln("        return delegate.$fnName($args)")
-            out.writeln("            .context(")
-            out.writeln("                { $contextMsg },")
-            out.writeln("                { SourceLocation(\"$file\", $line, \"$fnName\") },")
-            out.writeln("            )")
+            if (fileLocation != null) {
+                val packagePath = iface.packageName.asString().replace('.', '/')
+                val absPath = fileLocation.filePath
+                val relIdx = absPath.indexOf("/$packagePath/")
+                val relPath = if (relIdx >= 0) absPath.substring(relIdx + 1) else absPath.substringAfterLast('/')
+                out.writeln("            .context(")
+                out.writeln("                { $contextMsg },")
+                out.writeln("                { SourceLocation(\"$relPath\", ${fileLocation.lineNumber}, \"$fnName\") },")
+                out.writeln("            )")
+            } else {
+                out.writeln("            .context { $contextMsg }")
+            }
         }
 
         out.writeln("    }")
@@ -168,6 +193,12 @@ internal class TraceContextProcessor(
             if (includeValue) "$name=\$$name" else name
         }
         return "\"$ifaceName.$fnName($paramParts)\""
+    }
+
+    /** Returns true for the implicit `kotlin.Any?` upper bound KSP adds to unbounded type params. */
+    private fun KSTypeReference.isImplicitAnyBound(): Boolean {
+        val resolved = resolve()
+        return resolved.declaration.qualifiedName?.asString() == "kotlin.Any" && resolved.isMarkedNullable
     }
 
     private fun KSType.isResType(): Boolean {

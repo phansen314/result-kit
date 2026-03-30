@@ -194,14 +194,10 @@ Frames are appended (index 0 = innermost/most-specific). This is the natural rea
 
 Prepend would be more efficient (linked list, `O(1)` prepend vs `O(n)` list copy) but would require reversing the list for display. The current approach keeps the implementation simple and the frame list immediately usable without reversal.
 
-### orFail(context: String) — plain String, not lambda
+### orFailContext — lazy lambda, not plain String
 
-The context-aware `orFail` overloads take a plain `String` rather than `() -> String`. Two reasons:
-
-1. **Avoids overload ambiguity.** `{ "message" }` is a `() -> String` lambda, but when `E = String` it is also a valid `(String) -> String` (one-param). This is ambiguous with `orFail(mapError: (F) -> E)`. A plain `String` removes the ambiguity entirely.
-
-2. **Laziness is unnecessary.** We're already on the Fail path at `orFail` call time — the result is already a Fail before we evaluate the context string. There's nothing to defer.
+`orFailContext` takes a `() -> String` lambda rather than a plain `String`. The lambda is only invoked on the Fail path, so there is zero allocation on Ok. The function is named `orFailContext` (not `orFail`) to avoid overload ambiguity with `orFail(mapError: (F) -> E)` when `E = String` — `{ "message" }` would be ambiguous between `() -> String` and `(String) -> String`.
 
 ### FailException carries frames
 
-`FailException` extends `Throwable` for control flow. When `.orFail(context)` or `withContext` short-circuits, the frame is attached to the `FailException` before it's thrown. All `Failure`-constructing catch sites (in `RailBuilder`, `FailMappingRail`, `ErrorMappingRail`, `MappingRail`) transfer `e.frames` to the new `Failure`. This ensures frames survive the throw/catch journey intact, even across mapping and exception-catching scopes.
+`FailException` extends `Throwable` for control flow. When `.orFailContext { }` or `withContext` short-circuits, the frame is attached to the `FailException` before it's thrown. All `Failure`-constructing catch sites (in `RailBuilder`, `FailMappingRail`, `ErrorMappingRail`, `MappingRail`) transfer `e.frames` to the new `Failure`. This ensures frames survive the throw/catch journey intact, even across mapping and exception-catching scopes.
