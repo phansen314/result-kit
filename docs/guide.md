@@ -445,10 +445,10 @@ fun processOrder(id: Int): Res<Order, AppError> = rail {
 }
 ```
 
-The context-aware `orFail` overloads attach a frame at the point of short-circuit:
+`orFailContext` attaches a frame at the point of short-circuit:
 
 ```kotlin
-val user = fetchUser(id).orFail("fetching user $id")
+val user = fetchUser(id).orFailContext { "fetching user $id" }
 ```
 
 ### Reading context at the boundary

@@ -426,14 +426,14 @@ fun processOrder(id: Int): Res<Order, AppError> = rail {
 }
 ```
 
-Use the context-aware `orFail` overloads to attach a frame at the point of short-circuit:
+Use `orFailContext` to attach a frame at the point of short-circuit:
 
 ```kotlin
-val user = fetchUser(id).orFail("fetching user $id")
-val profile = loadProfile(user.id).orFail("loading profile") { SourceLocation("Service.kt", 55, "processUser") }
+val user = fetchUser(id).orFailContext { "fetching user $id" }
+val profile = loadProfile(user.id).orFailContext({ "loading profile" }) { SourceLocation("Service.kt", 55, "processUser") }
 ```
 
-`orFail(context: String)` takes a plain `String` rather than a lambda — laziness is unnecessary since we're already on the Fail path, and a plain `String` avoids overload ambiguity when `E = String`.
+`orFailContext` takes a `() -> String` lambda — the message is only evaluated on the Fail path, so there is zero allocation on Ok. Named `orFailContext` (not `orFail`) to avoid overload ambiguity with `orFail(mapError)` when `E = String`.
 
 ### Extended fold
 
@@ -491,14 +491,14 @@ class UserRepositoryTraced(
     override fun findById(id: Int): Res<User, DbError> =
         delegate.findById(id)
             .context(
-                { "UserRepository.findById(id=$id)" },
+                { "UserRepository.findById(id)" },
                 { SourceLocation("UserRepository.kt", 3, "findById") },
             )
 
     override suspend fun save(user: User): Res<Unit, DbError> =
         delegate.save(user)
             .context(
-                { "UserRepository.save(user=$user)" },
+                { "UserRepository.save(user)" },
                 { SourceLocation("UserRepository.kt", 4, "save") },
             )
 
@@ -750,8 +750,8 @@ plugins {
 | `Res<V, F>.orFail(mapping: ErrorMappingRail<F, E>): V` | Unwrap Ok or short-circuit with mapped error via reusable mapping |
 | `ensure(condition: Boolean, error: () -> E)` | Short-circuit if condition is false |
 | `ensureNotNull(value: V?, error: () -> E): V` | Short-circuit if value is null |
-| `Res<V, E>.orFail(context: String): V` | Unwrap Ok or short-circuit; attaches context frame to failure |
-| `Res<V, E>.orFail(context: String, location: () -> SourceLocation): V` | Unwrap Ok or short-circuit; attaches frame with source location |
+| `Res<V, E>.orFailContext(context: () -> String): V` | Unwrap Ok or short-circuit; attaches context frame to failure (lazy) |
+| `Res<V, E>.orFailContext(context: () -> String, location: () -> SourceLocation): V` | Unwrap Ok or short-circuit; attaches frame with source location (lazy) |
 | `withContext(message: String, block: Rail<E>.() -> V): V` | Run block; appends context frame to any failure that short-circuits |
 | `withContext(message: String, location: () -> SourceLocation, block: Rail<E>.() -> V): V` | Same with source location |
 | `failMapping(mapError: (Exception) -> E): FailMappingRail<E>` | Create exception-catching scope |

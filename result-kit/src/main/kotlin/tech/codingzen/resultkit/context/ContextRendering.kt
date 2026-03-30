@@ -8,8 +8,8 @@ import tech.codingzen.resultkit.Res
 /**
  * Returns the context frame chain attached to this result.
  *
- * Frames are ordered innermost-first: index 0 is the most specific context
- * (closest to the error site). Returns an empty list for Ok results.
+ * Frames are ordered innermost-first: index 0 is the first-attached (innermost/closest-to-error)
+ * context; the last index is the outermost. Returns an empty list for Ok results.
  */
 public fun <V, E> Res<V, E>.contextChain(): List<Frame> {
     val underlying = inlineValue
@@ -18,6 +18,9 @@ public fun <V, E> Res<V, E>.contextChain(): List<Frame> {
 
 /**
  * Renders the error and its context chain as a human-readable multi-line string.
+ *
+ * Frames are listed in storage order (innermost-first): index 0 is the closest to the error.
+ * Compare with [contextSummary] which reverses frames for an outermost-first breadcrumb trail.
  *
  * Format:
  * ```
@@ -62,8 +65,8 @@ public fun <V, E> Res<V, E>.renderContext(): String {
  * Returns a compact one-line summary: `"outerCtx → innerCtx → ErrorType(msg)"`.
  *
  * Frames are listed outermost-first (reversed from storage order) so the summary
- * reads as a breadcrumb trail leading to the error. Returns `toString()` of the
- * error for Ok results (empty string) or Fail results with no frames.
+ * reads as a breadcrumb trail leading to the error. Returns an empty string for
+ * Ok results or Fail results with no context frames.
  */
 public fun <V, E> Res<V, E>.contextSummary(): String {
     val underlying = inlineValue

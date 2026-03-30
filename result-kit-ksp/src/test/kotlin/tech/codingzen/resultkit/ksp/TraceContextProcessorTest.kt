@@ -173,6 +173,85 @@ class TraceContextProcessorTest {
     }
 
     @Test
+    fun `method bounded type parameter bound is preserved in generated signature`() {
+        val source = SourceFile.kotlin("BoundedMethod.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface Sorter {
+                fun <T : Comparable<T>> sort(items: List<T>): Res<List<T>, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("SorterTraced")
+        // KSP resolves bounds to fully-qualified names
+        assertTrue(src.contains("<T : kotlin.Comparable<T>>"), "Expected bounded type param, got: $src")
+    }
+
+    @Test
+    fun `interface type parameter is forwarded to class declaration delegate and supertype`() {
+        val source = SourceFile.kotlin("GenericRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface GenericRepo<T> {
+                fun findById(id: Int): Res<T, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("GenericRepoTraced")
+        // Unbounded T: implicit kotlin.Any? is filtered out, so just <T>
+        assertTrue(src.contains("class GenericRepoTraced<T>("), "Expected class with <T>, got: $src")
+        assertTrue(src.contains("delegate: tech.codingzen.resultkit.ksp.test.GenericRepo<T>"), "Expected delegate<T>, got: $src")
+        assertTrue(src.contains(") : tech.codingzen.resultkit.ksp.test.GenericRepo<T>"), "Expected supertype<T>, got: $src")
+    }
+
+    @Test
+    fun `interface bounded type parameter is preserved on class and supertype`() {
+        val source = SourceFile.kotlin("BoundedRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface BoundedRepo<T : Comparable<T>> {
+                fun findMin(): Res<T, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("BoundedRepoTraced")
+        // KSP resolves bounds to fully-qualified names
+        assertTrue(src.contains("class BoundedRepoTraced<T : kotlin.Comparable<T>>("), "Expected bounded class param, got: $src")
+        // Supertype and delegate use args only (no bounds)
+        assertTrue(src.contains(": tech.codingzen.resultkit.ksp.test.BoundedRepo<T>"), "Expected supertype with arg only, got: $src")
+    }
+
+    @Test
+    fun `zero-parameter Res-returning method generates empty param list in message`() {
+        val source = SourceFile.kotlin("NoParams.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface HealthCheck {
+                fun ping(): Res<String, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("HealthCheckTraced")
+        assertTrue(src.contains("\"HealthCheck.ping()\""), "Expected empty parens in message, got: $src")
+    }
+
+    @Test
     fun `suspend function preserves suspend modifier`() {
         val source = SourceFile.kotlin("SuspendFn.kt", """
             package tech.codingzen.resultkit.ksp.test
@@ -188,6 +267,27 @@ class TraceContextProcessorTest {
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
         val src = result.generatedSource("AsyncRepoTraced")
         assertTrue(src.contains("suspend fun fetch"), "Got: $src")
+    }
+
+    @Test
+    fun `TraceContext on non-interface logs error and generates nothing`() {
+        val source = SourceFile.kotlin("NotAnInterface.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            class NotAnInterface
+        """.trimIndent())
+        val result = compile(source)
+        // KSP should succeed (error is logged, not a compilation failure)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        // No generated file should exist
+        val workDir = result.kspCompilation.workingDir
+        val generatedFiles = workDir.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && it.name != "NotAnInterface.kt" }
+            .filter { it.readText().contains("class NotAnInterface") }
+            .toList()
+        assertTrue(generatedFiles.isEmpty(), "Expected no generated wrapper, found: ${generatedFiles.map { it.name }}")
     }
 
     // -- runtime behaviour tests --

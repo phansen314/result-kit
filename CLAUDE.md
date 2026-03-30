@@ -38,7 +38,7 @@ Inside `rail {}`, the receiver is `Rail<E>` which provides:
 - `Res<V, E>.orFail(): V` — unwrap or short-circuit
 - `fail(e)`, `ensure(...)`, `ensureNotNull(...)` — explicit short-circuit
 - `orFail(mapping)` — inside `rail {}`, unwrap `Res<V, D>` using a reusable `ErrorMappingRail`. Preferred over `invoke(res)` for consistency with other `orFail` variants.
-- `orFail(context: String): V` / `orFail(context: String, location: () -> SourceLocation): V` — unwrap with context frame attached to failure. Plain `String` (not lambda) avoids overload ambiguity when `E = String`.
+- `orFailContext(context: () -> String): V` / `orFailContext(context, location)` — unwrap with context frame attached to failure. Lazy lambda: zero allocation on Ok path. Named `orFailContext` (not `orFail`) to avoid overload ambiguity with `orFail(mapError)` when `E = String`.
 - `withContext(message, block)` / `withContext(message, location, block)` — wraps a sub-block; catches `FailException`, appends a frame, rethrows.
 - Factory methods for mapping scopes: `failMapping()`, `errorMapping()`, `mapping()`
 
@@ -109,8 +109,8 @@ Opt-in error context — frames are stored inside the internal `Failure` sentine
 - **Scope allocation per `rail {}` call is acceptable.** Don't flag it in reviews.
 - **`failMapping { mapError }` + `scope { block }` pattern is intentional.** Don't collapse scope creation and invocation into a single call.
 - **Scope interfaces are standalone.** Don't create inheritance hierarchies between scope types; duplicate methods instead.
-- **Frame ordering is append (not prepend).** Index 0 = innermost/most-specific context. `orFail(context)` and `.context()` both append.
-- **`orFail(context)` takes a plain `String`, not a lambda.** Avoids overload ambiguity with `orFail(mapError: (F) -> E)` when `E = String`. Laziness is unnecessary since we're already on the Fail path.
+- **Frame ordering is append (not prepend).** Index 0 = innermost/most-specific context. `orFailContext { }` and `.context()` both append.
+- **`orFailContext` takes a `() -> String` lambda, not a plain `String`.** Zero allocation on Ok path. Named `orFailContext` (not `orFail`) to avoid overload ambiguity with `orFail(mapError: (F) -> E)` when `E = String`.
 
 ## Kotlin Compiler Settings
 

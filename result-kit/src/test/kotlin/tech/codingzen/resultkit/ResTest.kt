@@ -1,5 +1,6 @@
 package tech.codingzen.resultkit
 
+import tech.codingzen.resultkit.context.context
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -393,6 +394,14 @@ class ResTest {
     }
 
     @Test
+    fun `Fail equality is unaffected by context frames`() {
+        val base = Res.failure("err")
+        val withCtx = base.context { "some context" }
+        assertEquals(base, withCtx)
+        assertEquals(base.hashCode(), withCtx.hashCode())
+    }
+
+    @Test
     fun `toString formats correctly`() {
         assertEquals("Ok(42)", Res.ok(42).toString())
         assertEquals("Fail(err)", Res.failure("err").toString())
@@ -414,6 +423,73 @@ class ResTest {
         assertTrue(result.isFail)
         assertEquals(ex, result.errorOrThrow())
     }
+
+    // -- toResOr --
+
+    @Test
+    fun `toResOr on non-null returns Ok`() {
+        val result: Res<Int, String> = 42.toResOr { "was null" }
+        assertTrue(result.isOk)
+        assertEquals(42, result.getOrNull())
+    }
+
+    @Test
+    fun `toResOr on null returns Fail with error`() {
+        val result: Res<Int, String> = null.toResOr { "was null" }
+        assertTrue(result.isFail)
+        assertEquals("was null", result.errorOrNull())
+    }
+
+    // -- toFailIf --
+
+    @Test
+    fun `toFailIf converts Ok to Fail when predicate matches`() {
+        val result: Res<Int, String> = Res.ok(18).toFailIf({ it < 21 }) { "too young: $it" }
+        assertTrue(result.isFail)
+        assertEquals("too young: 18", result.errorOrNull())
+    }
+
+    @Test
+    fun `toFailIf leaves Ok unchanged when predicate does not match`() {
+        val result: Res<Int, String> = Res.ok(25).toFailIf({ it < 21 }) { "too young" }
+        assertTrue(result.isOk)
+        assertEquals(25, result.getOrNull())
+    }
+
+    @Test
+    fun `toFailIf passes through Fail unchanged`() {
+        val result: Res<Int, String> = Res.failure<String>("already failed").toFailIf({ true }) { "overwrite" }
+        assertTrue(result.isFail)
+        assertEquals("already failed", result.errorOrNull())
+    }
+
+    // -- flatten --
+
+    @Test
+    fun `flatten unwraps Ok of Ok`() {
+        val nested: Res<Res<Int, String>, String> = Res.ok(Res.ok(42))
+        val flat: Res<Int, String> = nested.flatten()
+        assertTrue(flat.isOk)
+        assertEquals(42, flat.getOrNull())
+    }
+
+    @Test
+    fun `flatten unwraps Ok of Fail`() {
+        val nested: Res<Res<Int, String>, String> = Res.ok(Res.failure("inner"))
+        val flat: Res<Int, String> = nested.flatten()
+        assertTrue(flat.isFail)
+        assertEquals("inner", flat.errorOrNull())
+    }
+
+    @Test
+    fun `flatten passes through outer Fail`() {
+        val nested: Res<Res<Int, String>, String> = Res.failure("outer")
+        val flat: Res<Int, String> = nested.flatten()
+        assertTrue(flat.isFail)
+        assertEquals("outer", flat.errorOrNull())
+    }
+
+    // -- toResult --
 
     @Test
     fun `Res Ok toResult returns success`() {

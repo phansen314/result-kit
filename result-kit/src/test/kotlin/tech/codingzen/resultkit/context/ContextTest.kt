@@ -147,12 +147,12 @@ class ContextTest {
         assertTrue(result.isOk)
     }
 
-    // -- orFail(context: String) inside rail {} --
+    // -- orFailContext { } inside rail {} --
 
     @Test
-    fun `orFail with context string attaches frame on failure`() {
+    fun `orFailContext attaches frame on failure`() {
         val result = rail<Int, String> {
-            Res.failure<String>("db error").orFail("fetching record")
+            Res.failure<String>("db error").orFailContext { "fetching record" }
         }
         assertTrue(result.isFail)
         val frames = result.contextChain()
@@ -161,19 +161,19 @@ class ContextTest {
     }
 
     @Test
-    fun `orFail with context on Ok returns value without frame`() {
+    fun `orFailContext on Ok returns value without frame`() {
         val result = rail<Int, String> {
-            Res.ok<Int>(7).orFail("fetching record")
+            Res.ok<Int>(7).orFailContext { "fetching record" }
         }
         assertTrue(result.isOk)
         assertEquals(7, result.getOrNull())
     }
 
     @Test
-    fun `orFail with context and location attaches location on failure`() {
+    fun `orFailContext with location attaches location on failure`() {
         val result = rail<Int, String> {
             Res.failure<String>("err")
-                .orFail("query", { SourceLocation("Repo.kt", 20, "findAll") })
+                .orFailContext({ "query" }, { SourceLocation("Repo.kt", 20, "findAll") })
         }
         val frames = result.contextChain()
         assertEquals(1, frames.size)
@@ -182,10 +182,10 @@ class ContextTest {
     }
 
     @Test
-    fun `orFail context and withContext combine correctly`() {
+    fun `orFailContext and withContext combine correctly`() {
         val result = rail<Int, String> {
             withContext("outer scope") {
-                Res.failure<String>("err").orFail("inner op")
+                Res.failure<String>("err").orFailContext { "inner op" }
             }
         }
         val frames = result.contextChain()
@@ -351,7 +351,7 @@ class ContextTest {
         val res = rail<Int, String> {
             withContext("level2") {          // outermost
                 withContext("level1") {      // middle
-                    Res.failure<String>("err").orFail("level0")   // innermost
+                    Res.failure<String>("err").orFailContext { "level0" }   // innermost
                 }
             }
         }
@@ -360,6 +360,30 @@ class ContextTest {
         assertEquals("level0", frames[0].message)
         assertEquals("level1", frames[1].message)
         assertEquals("level2", frames[2].message)
+    }
+
+    @Test
+    fun `withContext does not append frame for FailException from foreign scope`() {
+        // FailException and Rail are internal to the result-kit module, accessible here.
+        val foreignScope = tech.codingzen.resultkit.Rail<String>()
+        val foreignException = tech.codingzen.resultkit.FailException("foreign error", foreignScope)
+
+        var escaped: tech.codingzen.resultkit.FailException? = null
+        try {
+            rail<Int, String> {
+                withContext("should not be added") {
+                    // Conditional so the block's return type is Int, not Nothing
+                    if (true) throw foreignException
+                    0
+                }
+            }
+        } catch (e: tech.codingzen.resultkit.FailException) {
+            escaped = e
+        }
+
+        assertNotNull(escaped, "FailException from foreign scope should escape rail{}")
+        assertSame(foreignException, escaped, "Exception should be rethrown unmodified")
+        assertTrue(escaped.frames.isEmpty(), "withContext must not add a frame: ${escaped.frames}")
     }
 
     // -- failMapping inside withContext --
@@ -377,6 +401,44 @@ class ContextTest {
         val frames = result.contextChain()
         assertEquals(1, frames.size)
         assertEquals("outer operation", frames[0].message)
+    }
+
+    // -- failMapping mapper throws inside withContext --
+
+    @Test
+    fun `failMapping mapper that throws inside withContext raises ErrorMapperException`() {
+        val ex = assertFailsWith<tech.codingzen.resultkit.ErrorMapperException> {
+            rail<Int, String> {
+                withContext("outer") {
+                    val fm = failMapping { _: Exception -> throw IllegalStateException("mapper broke") }
+                    fm<Int> { throw RuntimeException("original") }
+                }
+            }
+        }
+        assertTrue(ex.message!!.contains("mapper broke"), "Got: ${ex.message}")
+    }
+
+    // -- contextMap null handling --
+
+    @Test
+    fun `contextMap omits null location and attachment`() {
+        val res: Res<Int, String> = Res.failure("err").context { "msg" }
+        val frames = res.contextMap()["frames"] as List<*>
+        val frame = frames[0] as Map<*, *>
+        assertEquals("msg", frame["message"])
+        assertFalse(frame.containsKey("location"), "null location should be omitted")
+        assertFalse(frame.containsKey("attachment"), "null attachment should be omitted")
+    }
+
+    @Test
+    fun `contextMap includes location and attachment when present`() {
+        val res: Res<Int, String> = Res.failure("err")
+            .contextFrame { Frame("msg", attachment = 42, location = SourceLocation("X.kt", 1)) }
+        val frames = res.contextMap()["frames"] as List<*>
+        val frame = frames[0] as Map<*, *>
+        assertEquals("msg", frame["message"])
+        assertEquals("X.kt:1", frame["location"])
+        assertEquals(42, frame["attachment"])
     }
 
     // -- SourceLocation toString --

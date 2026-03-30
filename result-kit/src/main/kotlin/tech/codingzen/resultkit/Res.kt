@@ -13,8 +13,10 @@ internal class Failure(
     @JvmField val error: Any?,
     @JvmField val frames: List<Frame> = emptyList(),
 ) {
-    override fun equals(other: Any?) = other is Failure && other.error == error && other.frames == frames
-    override fun hashCode() = ((error?.hashCode() ?: 0) xor 0x4641494C) * 31 + frames.hashCode()
+    // Frames are observability metadata, not part of the domain error.
+    // Two failures with the same error are equal regardless of attached context.
+    override fun equals(other: Any?) = other is Failure && other.error == error
+    override fun hashCode() = (error?.hashCode() ?: 0) xor 0x4641494C
     override fun toString() = if (frames.isEmpty()) "Fail($error)" else "Fail($error, frames=$frames)"
 }
 
@@ -276,7 +278,7 @@ public inline fun <V, E> V?.toResOr(error: () -> E): Res<V, E> {
 
 /**
  * Converts an Ok to Fail if [predicate] returns `true` for the success value.
- * A Fail passes through unchanged. See also [toFailUnless].
+ * A Fail passes through unchanged.
  *
  * @param predicate tested against the Ok value.
  * @param transform produces the error when [predicate] matches.

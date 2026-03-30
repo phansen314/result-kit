@@ -13,8 +13,8 @@ import kotlin.contracts.contract
  *
  * The [message] lambda is only invoked when this result is Fail — zero cost on the Ok path.
  *
- * Frames are stored innermost-first: each call prepends a new frame so the most recently
- * added context appears at index 0.
+ * Frames are stored innermost-first: each call appends a new frame, so index 0 is the
+ * first-attached (innermost/closest-to-error) context and the last index is the outermost.
  *
  * ```
  * fun loadUser(id: Int): Res<User, AppError> =

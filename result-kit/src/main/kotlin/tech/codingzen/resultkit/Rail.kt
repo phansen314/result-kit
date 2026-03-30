@@ -191,20 +191,20 @@ public class Rail<E> @PublishedApi internal constructor() {
     // -- Context DSL --
 
     /**
-     * Unwraps the Ok value, or short-circuits this rail with a context message prepended to the
+     * Unwraps the Ok value, or short-circuits this rail with a context message appended to the
      * Fail's frame chain.
      *
-     * The [context] lambda is only invoked when this result is Fail — zero cost on the Ok path.
-     * Disambiguated from `orFail(mapError: (F) -> E)` (one-param lambda) by taking a plain
-     * [String] rather than a lambda. Eagerness is fine — this branch is only reached on Fail.
+     * The [context] lambda is only invoked when this result is Fail — zero allocation on the
+     * Ok path. Named `orFailContext` (not `orFail`) to avoid overload ambiguity with
+     * `orFail(mapError: (F) -> E)` when `E = String`.
      *
      * ```
-     * val user = fetchUser(id).orFail("fetching user id=$id")
+     * val user = fetchUser(id).orFailContext { "fetching user id=$id" }
      * ```
      */
-    public fun <V> Res<V, E>.orFail(context: String): V {
+    public inline fun <V> Res<V, E>.orFailContext(context: () -> String): V {
         if (inlineValue !is Failure) return inlineValue as V
-        val frame = tech.codingzen.resultkit.context.Frame(message = context)
+        val frame = tech.codingzen.resultkit.context.Frame(message = context())
         throw FailException(inlineValue.error, this@Rail, inlineValue.frames + frame)
     }
 
@@ -212,15 +212,15 @@ public class Rail<E> @PublishedApi internal constructor() {
      * Unwraps the Ok value, or short-circuits this rail with a context message and source location
      * appended to the Fail's frame chain.
      *
-     * The [location] lambda is only invoked when this result is Fail.
+     * Both lambdas are only invoked when this result is Fail.
      */
-    public inline fun <V> Res<V, E>.orFail(
-        context: String,
+    public inline fun <V> Res<V, E>.orFailContext(
+        context: () -> String,
         location: () -> tech.codingzen.resultkit.context.SourceLocation,
     ): V {
         if (inlineValue !is Failure) return inlineValue as V
         val frame = tech.codingzen.resultkit.context.Frame(
-            message = context,
+            message = context(),
             location = location(),
         )
         throw FailException(inlineValue.error, this@Rail, inlineValue.frames + frame)
@@ -245,6 +245,7 @@ public class Rail<E> @PublishedApi internal constructor() {
         try {
             return block()
         } catch (e: FailException) {
+            if (e.scope !== this) throw e
             val frame = tech.codingzen.resultkit.context.Frame(message = message)
             throw FailException(e.error, e.scope, e.frames + frame)
         }
@@ -264,6 +265,7 @@ public class Rail<E> @PublishedApi internal constructor() {
         try {
             return block()
         } catch (e: FailException) {
+            if (e.scope !== this) throw e
             val frame = tech.codingzen.resultkit.context.Frame(
                 message = message,
                 location = location(),
@@ -317,7 +319,7 @@ public class Rail<E> @PublishedApi internal constructor() {
 @PublishedApi
 internal class FailException(
     val error: Any?,
-    val scope: Any,
+    val scope: Rail<*>,
     val frames: List<tech.codingzen.resultkit.context.Frame> = emptyList(),
 ) : Throwable(
     "result-kit: FailException escaped a rail{} block — avoid catching Throwable inside rail{} blocks"
