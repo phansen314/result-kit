@@ -24,12 +24,12 @@ public class Rail<E> @PublishedApi internal constructor() {
     /** Unwraps the Ok value, or short-circuits this rail with the Fail error. */
     @Suppress("NOTHING_TO_INLINE")
     public inline fun <V> Res<V, E>.orFail(): V =
-        if (inlineValue is Failure) fail(inlineValue.error as E)
+        if (inlineValue is Failure) throw FailException(inlineValue.error, this@Rail, inlineValue.frames)
         else inlineValue as V
 
     /** Unwraps the Ok value, or maps the error via [mapError] and short-circuits this rail. */
     public inline fun <V, F> Res<V, F>.orFail(mapError: (F) -> E): V =
-        if (inlineValue is Failure) fail(mapError(inlineValue.error as F))
+        if (inlineValue is Failure) throw FailException(mapError(inlineValue.error as F), this@Rail, inlineValue.frames)
         else inlineValue as V
 
     /**

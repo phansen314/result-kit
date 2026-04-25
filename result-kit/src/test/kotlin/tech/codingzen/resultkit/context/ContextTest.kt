@@ -279,6 +279,43 @@ class ContextTest {
     }
 
     @Test
+    fun `renderContext exact format with two frames no location`() {
+        val res: Res<Int, String> = Res.failure("connection refused")
+            .context { "MetricsRepository.findByTeam(teamId=7)" }
+            .context { "building dashboard for user 42" }
+        val expected =
+            "connection refused\n" +
+            "\n" +
+            "  0: MetricsRepository.findByTeam(teamId=7)\n" +
+            "  1: building dashboard for user 42"
+        assertEquals(expected, res.renderContext())
+    }
+
+    @Test
+    fun `renderContext exact format with location`() {
+        val res: Res<Int, String> = Res.failure("err")
+            .contextFrame { Frame("op", location = SourceLocation("File.kt", 42, "doIt")) }
+        val expected =
+            "err\n" +
+            "\n" +
+            "  0: op\n" +
+            "     at File.kt:42 in doIt"
+        assertEquals(expected, res.renderContext())
+    }
+
+    @Test
+    fun `renderContext exact format with attachment`() {
+        val res: Res<Int, String> = Res.failure("err")
+            .contextFrame { Frame("op", attachment = "req-123") }
+        val expected =
+            "err\n" +
+            "\n" +
+            "  0: op\n" +
+            "     attachment=req-123"
+        assertEquals(expected, res.renderContext())
+    }
+
+    @Test
     fun `contextSummary returns empty string on Ok`() {
         assertEquals("", Res.ok<Int>(1).contextSummary())
     }
@@ -292,6 +329,14 @@ class ContextTest {
         // frames: [findUser, buildDashboard]; reversed for summary: buildDashboard → findUser → error
         assertTrue(summary.contains("→"))
         assertTrue(summary.contains("db error"))
+    }
+
+    @Test
+    fun `contextSummary exact format`() {
+        val res: Res<Int, String> = Res.failure("db error")
+            .context { "findUser" }
+            .context { "buildDashboard" }
+        assertEquals("buildDashboard → findUser → db error", res.contextSummary())
     }
 
     @Test
@@ -314,6 +359,19 @@ class ContextTest {
         assertEquals(1, frames.size)
         val frame = frames[0] as Map<*, *>
         assertEquals("ctx", frame["message"])
+    }
+
+    @Test
+    fun `contextMap exact structure with location and attachment`() {
+        val res: Res<Int, String> = Res.failure("err")
+            .contextFrame { Frame("op", attachment = 7, location = SourceLocation("F.kt", 10, "fn")) }
+        val map = res.contextMap()
+        val frames = map["frames"] as List<*>
+        val frame = frames[0] as Map<*, *>
+        assertEquals("op", frame["message"])
+        assertEquals("F.kt:10 in fn", frame["location"])
+        assertEquals(7, frame["attachment"])
+        assertEquals(setOf("message", "location", "attachment"), frame.keys)
     }
 
     // -- findAttachment --
@@ -451,5 +509,71 @@ class ContextTest {
     @Test
     fun `SourceLocation toString with function`() {
         assertEquals("Foo.kt:42 in myFun", SourceLocation("Foo.kt", 42, "myFun").toString())
+    }
+
+    // -- orFail preserves context frames --
+
+    @Test
+    fun `orFail preserves existing context frames`() {
+        val res: Res<Int, String> = Res.failure("err")
+            .context { "inner context" }
+        val result = rail<Int, String> {
+            res.orFail()
+        }
+        assertTrue(result.isFail)
+        assertEquals("err", result.errorOrNull())
+        val frames = result.contextChain()
+        assertEquals(1, frames.size)
+        assertEquals("inner context", frames[0].message)
+    }
+
+    @Test
+    fun `orFail with mapError preserves existing context frames`() {
+        val res: Res<Int, Int> = Res.failure(404)
+            .context { "from http layer" }
+        val result = rail<Int, String> {
+            res.orFail { code -> "HTTP $code" }
+        }
+        assertTrue(result.isFail)
+        assertEquals("HTTP 404", result.errorOrNull())
+        val frames = result.contextChain()
+        assertEquals(1, frames.size)
+        assertEquals("from http layer", frames[0].message)
+    }
+
+    @Test
+    fun `orFail with ErrorMappingRail preserves existing context frames`() {
+        val res: Res<Int, Int> = Res.failure(500)
+            .context { "api call" }
+        val result = rail<Int, String> {
+            val http = errorMapping<Int> { code -> "Error $code" }
+            res.orFail(http)
+        }
+        assertTrue(result.isFail)
+        assertEquals("Error 500", result.errorOrNull())
+        val frames = result.contextChain()
+        assertEquals(1, frames.size)
+        assertEquals("api call", frames[0].message)
+    }
+
+    @Test
+    fun `orFail preserves frames from KSP-style chained context`() {
+        // Simulates what a @TraceContext wrapper produces
+        val res: Res<Int, String> = Res.failure("not found")
+            .context(
+                { "UserRepo.findById(id)" },
+                { SourceLocation("UserRepo.kt", 10, "findById") },
+            )
+        val result = rail<Int, String> {
+            withContext("loading dashboard") {
+                res.orFail()
+            }
+        }
+        assertTrue(result.isFail)
+        val frames = result.contextChain()
+        assertEquals(2, frames.size)
+        assertEquals("UserRepo.findById(id)", frames[0].message)
+        assertNotNull(frames[0].location)
+        assertEquals("loading dashboard", frames[1].message)
     }
 }

@@ -1,12 +1,12 @@
 plugins {
-    kotlin("jvm") version "1.9.25"
+    alias(libs.plugins.kotlin.jvm)
     `maven-publish`
     signing
-    id("com.gradleup.nmcp") version "1.4.4"
+    alias(libs.plugins.nmcp)
 }
 
 group = "tech.codingzen"
-version = "1.0.0"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -14,7 +14,7 @@ repositories {
 
 dependencies {
     testImplementation(kotlin("test"))
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.test {

@@ -471,6 +471,37 @@ val summary: String = result.contextSummary()   // "frame0 → frame1 → error.
 val logMap: Map<String, Any?> = result.contextMap()  // for structured/JSON logging
 ```
 
+Sample output for a failure with two frames:
+
+```text
+DbError(connection refused)
+
+  0: MetricsRepository.findByTeam(teamId=7)
+     at MetricsRepository.kt:42 in findByTeam
+  1: building dashboard for user 42
+```
+
+`contextSummary()` for the same failure:
+
+```text
+building dashboard for user 42 → MetricsRepository.findByTeam(teamId=7) → DbError(connection refused)
+```
+
+`contextMap()` for the same failure:
+
+```kotlin
+mapOf(
+    "error"  to DbError("connection refused"),
+    "frames" to listOf(
+        mapOf(
+            "message"  to "MetricsRepository.findByTeam(teamId=7)",
+            "location" to "MetricsRepository.kt:42 in findByTeam",
+        ),
+        mapOf("message" to "building dashboard for user 42"),
+    ),
+)
+```
+
 ### @TraceContext — generating traced wrappers automatically
 
 For service layers with many `Res`-returning methods, the KSP module generates the `.context(...)` calls for you. Annotate an interface with `@TraceContext`:
@@ -507,6 +538,50 @@ val auth: AuthService = AuthServiceTraced(delegate = realAuthService)
 Every call to `auth.login(...)` now automatically attaches a context frame with the message `"authenticating user $username"` (password excluded) and a `SourceLocation` pointing to the interface declaration. Non-`Res` methods are delegated as-is.
 
 See the [API Reference](../README.md#tracecontent-annotations-result-kit-ksp) for annotation options.
+
+## Common Pitfalls
+
+### Don't `catch(Throwable)` or `catch(Exception)` inside `rail {}`
+
+`rail {}` uses an internal `FailException` (extends `Throwable`, not `Exception`) for short-circuit control flow. A bare `catch(Throwable)` inside the rail will swallow it and break the DSL. A `catch(Exception)` is safer — `FailException` slips past it — but it will still silently absorb anything `failMapping` should be translating.
+
+```kotlin
+// WRONG — catches FailException, breaks short-circuit
+rail {
+    try {
+        riskyCall().orFail()
+    } catch (t: Throwable) {
+        // swallows the rail's own control-flow exception
+    }
+}
+
+// WRONG — silently eats exceptions that failMapping should translate
+rail {
+    try {
+        File(path).readText()
+    } catch (e: Exception) {
+        // exception never reaches a typed error
+    }
+}
+
+// RIGHT — failMapping translates exceptions to your error type
+rail {
+    val io = failMapping { e -> AppError.IO(e.message) }
+    val text = io { File(path).readText() }
+}
+```
+
+### Don't put `rail {}` inside a transaction
+
+Some transaction frameworks catch `Throwable` to trigger rollback. Because `FailException` extends `Throwable`, that can cause unintended rollbacks or swallow your typed errors. Keep `rail {}` outside; wrap the transaction with `failMapping` instead. See [Database Transactions](#database-transactions).
+
+### `mapError` preserves frames
+
+If you transform a Fail error with `mapError`, any context frames already attached are carried over to the new failure. You don't need to re-attach context after changing the error type.
+
+### Frames are storage-order, summaries are reversed
+
+`contextChain()` returns frames innermost-first (index 0 = closest to error). `renderContext()` matches that order. `contextSummary()` reverses for display so the trail reads outermost → innermost → error.
 
 ## Next Steps
 

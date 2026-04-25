@@ -119,13 +119,16 @@ internal class TraceContextProcessor(
         // Build parameter list
         val params = fn.parameters.joinToString(", ") { param ->
             val paramName = param.name?.asString() ?: "_"
-            val paramType = param.type.resolve().toTypeName()
-            "$paramName: $paramType"
+            val resolvedType = param.type.resolve()
+            val paramType = if (param.isVararg) varargElementType(resolvedType) else resolvedType.toTypeName()
+            val varargMod = if (param.isVararg) "vararg " else ""
+            "$varargMod$paramName: $paramType"
         }
 
         // Build argument list for delegate call
         val args = fn.parameters.joinToString(", ") { param ->
-            param.name?.asString() ?: "_"
+            val name = param.name?.asString() ?: "_"
+            if (param.isVararg) "*$name" else name
         }
 
         // Return type
@@ -178,8 +181,12 @@ internal class TraceContextProcessor(
             ?.value as? String
 
         if (traceMessage != null) {
-            // Replace {paramName} with $paramName
-            val interpolated = traceMessage.replace(Regex("\\{(\\w+)\\}")) { match ->
+            // Escape characters that would break the generated string literal,
+            // then replace {paramName} with $paramName for interpolation.
+            val escaped = traceMessage
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+            val interpolated = escaped.replace(Regex("\\{(\\w+)\\}")) { match ->
                 "\$${match.groupValues[1]}"
             }
             return "\"$interpolated\""
@@ -193,6 +200,31 @@ internal class TraceContextProcessor(
             if (includeValue) "$name=\$$name" else name
         }
         return "\"$ifaceName.$fnName($paramParts)\""
+    }
+
+    /**
+     * Returns the element type name for a vararg parameter's array type.
+     *
+     * KSP gives the array type (e.g. `IntArray` for `vararg ids: Int`). For reference
+     * arrays (`Array<T>`) the element type is extracted from the first type argument.
+     * For primitive arrays (`IntArray`, `LongArray`, etc.) a direct mapping is used.
+     */
+    private fun varargElementType(arrayType: KSType): String {
+        // Reference arrays: Array<T> — extract T from type argument
+        val fromArgs = arrayType.arguments.firstOrNull()?.type?.resolve()?.toTypeName()
+        if (fromArgs != null) return fromArgs
+        // Primitive arrays: map to element type
+        return when (arrayType.declaration.qualifiedName?.asString()) {
+            "kotlin.IntArray" -> "kotlin.Int"
+            "kotlin.LongArray" -> "kotlin.Long"
+            "kotlin.ShortArray" -> "kotlin.Short"
+            "kotlin.ByteArray" -> "kotlin.Byte"
+            "kotlin.FloatArray" -> "kotlin.Float"
+            "kotlin.DoubleArray" -> "kotlin.Double"
+            "kotlin.CharArray" -> "kotlin.Char"
+            "kotlin.BooleanArray" -> "kotlin.Boolean"
+            else -> arrayType.toTypeName()
+        }
     }
 
     /** Returns true for the implicit `kotlin.Any?` upper bound KSP adds to unbounded type params. */

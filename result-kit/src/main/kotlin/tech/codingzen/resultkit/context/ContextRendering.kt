@@ -54,7 +54,7 @@ public fun <V, E> Res<V, E>.renderContext(): String {
                 if (frame.attachment != null) {
                     appendLine()
                     append("     attachment=")
-                    append(frame.attachment)
+                    try { append(frame.attachment) } catch (_: Exception) { append("<error rendering attachment>") }
                 }
             }
         }

@@ -380,6 +380,45 @@ class TraceContextProcessorTest {
         assertEquals(99, count)
     }
 
+    @Test
+    fun `vararg parameter generates correct override and spread in delegation`() {
+        val source = SourceFile.kotlin("VarargMethod.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface BatchRepo {
+                fun findByIds(vararg ids: Int): Res<List<String>, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("BatchRepoTraced")
+        assertTrue(src.contains("vararg ids:"), "Expected vararg in param list, got: $src")
+        assertTrue(src.contains("*ids"), "Expected spread operator in delegation, got: $src")
+    }
+
+    @Test
+    fun `TraceMessage with double quotes generates valid string literal`() {
+        val source = SourceFile.kotlin("QuotedMessage.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceMessage
+
+            @TraceContext
+            interface QuotedRepo {
+                @TraceMessage("loading user \"{id}\"")
+                fun findById(id: Int): Res<String, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("QuotedRepoTraced")
+        assertTrue(src.contains("\\\""), "Expected escaped quotes in generated source, got: $src")
+    }
+
     // -- test fixture --
 
     private val simpleInterfaceSource = SourceFile.kotlin("SimpleRepo.kt", """
