@@ -76,14 +76,15 @@ Transforms:
 - `fold(onOk, onFail): T` — exhaustive match (recommended over `when`)
 - `map(transform): Res<U, E>` — transforms Ok, Fail passes through unchanged (including frames)
 - `mapError(transform): Res<V, F>` — transforms Fail error, **preserves frames**, Ok passes through
-- `recover(transform: (E) -> V): Res<V, Nothing>` — infallible Fail→Ok conversion
-- `orElse(transform: (E) -> Res<V, F>): Res<V, F>` — fallible recovery
+- `recover(transform: (E) -> V): Res<V, Nothing>` — infallible Fail→Ok conversion. Frames are discarded (Ok carries no frames).
+- `orElse(transform: (E) -> Res<V, F>): Res<V, F>` — fallible recovery. If the recovery also fails, original frames are prepended to the recovery's frames.
 - `flatMap(transform: (V) -> Res<U, E>): Res<U, E>` — escape hatch for chaining outside rail; prefer rail + orFail
 - `flatten(): Res<V, E>` — unwraps `Res<Res<V, E>, E>`
 
 Side effects:
 - `onOk(action): Res<V, E>` — runs action, returns self
 - `onFail(action): Res<V, E>` — runs action, returns self
+- `tap(onOk, onFail): Res<V, E>` — both branches at once; default no-op lambdas
 
 Factories & conditionals:
 - `V?.toResOr(error: () -> E): Res<V, E>` — non-null→Ok, null→Fail
@@ -92,6 +93,7 @@ Factories & conditionals:
 Interop:
 - `Result<V>.toRes(): Res<V, Throwable>`
 - `Res<V, E : Throwable>.toResult(): Result<V>`
+- `Res<V, E>.toResult(transform: (E) -> Throwable): Result<V>` — for non-throwable error types
 
 All inline extension functions use `@OptIn(ExperimentalContracts::class)` with appropriate `callsInPlace` contracts. `@UnsafeVariance` is used where lambdas produce (not consume) covariant type parameters — each usage is safe.
 
@@ -280,6 +282,9 @@ Frames are stored in `Failure.frames: List<Frame>` (default `emptyList()`). Also
 | `.context { msg }` on Ok | No-op, returns `this` |
 | `.mapError { transform }` | Creates new `Failure(newError, existingFrames)` — **preserves frames** |
 | `.map { transform }` on Fail | Passes `Failure` through unchanged — **preserves frames** |
+| `.orElse { transform }` on Fail→Fail | Merges: `Failure(rec.error, original.frames + rec.frames)` — **preserves frames** |
+| `.orElse { transform }` on Fail→Ok | Returns recovery Ok unchanged — frames discarded (Ok has none) |
+| `.recover { transform }` on Fail | Returns Ok — frames discarded (Ok has none) |
 | `.orFail()` inside rail | Throws `FailException(error, scope, inlineValue.frames)` — **preserves frames** |
 | `.orFail(mapError)` inside rail | Throws `FailException(mapError(error), scope, inlineValue.frames)` — **preserves frames** |
 | `.orFailContext { msg }` | Reads `inlineValue.frames`, appends new frame, throws with them — **correct** |
@@ -348,7 +353,6 @@ Derived from KSP's `FileLocation`. Uses package-relative path for unambiguous id
 
 ### Known Limitations
 
-- `vararg` parameters not handled — generated wrapper won't compile if the interface has vararg methods
 - Default parameter values on interface methods — not reachable in KSP (interface methods can't have defaults), but not explicitly guarded
 - Generated code uses fully-qualified type names (no imports beyond Res, SourceLocation, context)
 

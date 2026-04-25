@@ -1,6 +1,7 @@
 package tech.codingzen.resultkit
 
 import tech.codingzen.resultkit.context.context
+import tech.codingzen.resultkit.context.contextChain
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -260,6 +261,27 @@ class ResTest {
         assertEquals(3, result.errorOrThrow())
     }
 
+    @Test
+    fun `orElse merges frames when recovery also fails`() {
+        val original: Res<Int, String> = Res.failure("err")
+            .context { "original-outer" }
+            .context { "original-inner" }
+        val result: Res<Int, Int> = original.orElse {
+            Res.failure(it.length).context { "recovery-frame" }
+        }
+        assertTrue(result.isFail)
+        val frames = result.contextChain().map { it.message }
+        assertEquals(listOf("original-outer", "original-inner", "recovery-frame"), frames)
+    }
+
+    @Test
+    fun `orElse with Ok recovery does not carry original frames`() {
+        val original: Res<Int, String> = Res.failure("err").context { "ctx" }
+        val result: Res<Int, Nothing> = original.orElse { Res.ok(it.length) }
+        assertTrue(result.isOk)
+        assertEquals(emptyList(), result.contextChain())
+    }
+
     // -- flatMap --
 
     @Test
@@ -503,5 +525,56 @@ class ResTest {
         val result: Res<Int, RuntimeException> = Res.failure(ex)
         assertTrue(result.toResult().isFailure)
         assertEquals(ex, result.toResult().exceptionOrNull())
+    }
+
+    @Test
+    fun `Res Fail toResult with transform wraps non-throwable error`() {
+        val result: Res<Int, String> = Res.failure("boom")
+        val converted = result.toResult { IllegalStateException(it) }
+        assertTrue(converted.isFailure)
+        val ex = converted.exceptionOrNull()
+        assertTrue(ex is IllegalStateException)
+        assertEquals("boom", ex.message)
+    }
+
+    @Test
+    fun `Res Ok toResult with transform returns success and does not call transform`() {
+        var called = false
+        val result: Res<Int, String> = Res.ok(42)
+        val converted = result.toResult { called = true; IllegalStateException(it) }
+        assertEquals(Result.success(42), converted)
+        assertFalse(called)
+    }
+
+    // -- tap --
+
+    @Test
+    fun `tap calls onOk for Ok and returns self`() {
+        var okSeen: Int? = null
+        var failSeen: String? = null
+        val original: Res<Int, String> = Res.ok(42)
+        val result = original.tap(onOk = { okSeen = it }, onFail = { failSeen = it })
+        assertEquals(42, okSeen)
+        assertEquals(null, failSeen)
+        assertEquals(original, result)
+    }
+
+    @Test
+    fun `tap calls onFail for Fail and returns self`() {
+        var okSeen: Int? = null
+        var failSeen: String? = null
+        val original: Res<Int, String> = Res.failure("err")
+        val result = original.tap(onOk = { okSeen = it }, onFail = { failSeen = it })
+        assertEquals(null, okSeen)
+        assertEquals("err", failSeen)
+        assertEquals(original, result)
+    }
+
+    @Test
+    fun `tap with default lambdas is a no-op`() {
+        val original: Res<Int, String> = Res.ok(42)
+        assertEquals(original, original.tap())
+        val failed: Res<Int, String> = Res.failure("err")
+        assertEquals(failed, failed.tap())
     }
 }

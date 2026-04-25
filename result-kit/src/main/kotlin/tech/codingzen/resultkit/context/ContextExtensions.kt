@@ -16,6 +16,10 @@ import kotlin.contracts.contract
  * Frames are stored innermost-first: each call appends a new frame, so index 0 is the
  * first-attached (innermost/closest-to-error) context and the last index is the outermost.
  *
+ * Each call on a Fail allocates a new [Frame], a new `Failure`, and a copy of the frames list.
+ * The Ok path is allocation-free. Chaining many `.context()` calls per failure in tight loops
+ * is therefore not free; group them or use [contextFrame] with a pre-built frame if needed.
+ *
  * ```
  * fun loadUser(id: Int): Res<User, AppError> =
  *     repository.findById(id)

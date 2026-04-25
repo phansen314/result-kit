@@ -148,7 +148,8 @@ public inline fun <V, E, F> Res<V, E>.mapError(transform: (E) -> F): Res<V, F> {
 /**
  * Converts a Fail to Ok by applying [transform] to the error. An Ok passes through unchanged.
  *
- * The error type becomes `Nothing` because recovery is infallible.
+ * The error type becomes `Nothing` because recovery is infallible. Any context frames attached
+ * to the input Failure are discarded — the result is Ok and Ok carries no frames.
  *
  * @param transform converts the failure error into a success value.
  * @return Ok with either the original value or the recovered value.
@@ -165,17 +166,25 @@ public inline fun <V, E> Res<V, E>.recover(transform: (E) -> @UnsafeVariance V):
  * Attempts fallible recovery: applies [transform] to the error if this is Fail, returning a new
  * [Res] that may itself fail with a different error type [F]. An Ok passes through unchanged.
  *
+ * If recovery succeeds, the original frames are discarded (the result is Ok). If recovery itself
+ * fails, the original frames are prepended to the recovery's frames so that the trail back to the
+ * original failure is preserved.
+ *
  * For infallible recovery, use [recover] instead.
  *
  * @param transform converts the failure error into a new [Res].
- * @return the original Ok, or the result of [transform].
+ * @return the original Ok, or the result of [transform] (with frames merged if it fails).
  */
 // Fallible fallback: transform returns a new Res that may itself fail with error type F.
 // @UnsafeVariance is safe — the lambda produces a Res<V, F>, it doesn't consume a covariant V.
 public inline fun <V, E, F> Res<V, E>.orElse(transform: (E) -> Res<@UnsafeVariance V, F>): Res<V, F> {
     contract { callsInPlace(transform, InvocationKind.AT_MOST_ONCE) }
-    return if (inlineValue is Failure) transform(inlineValue.error as E)
-    else Res(inlineValue)
+    if (inlineValue !is Failure) return Res(inlineValue)
+    val original = inlineValue
+    val recovered = transform(original.error as E)
+    val rec = recovered.inlineValue
+    return if (rec is Failure) Res(Failure(rec.error, original.frames + rec.frames))
+    else recovered
 }
 
 /**
@@ -316,3 +325,32 @@ public inline fun <V> Result<V>.toRes(): Res<V, Throwable> =
 public inline fun <V, E : Throwable> Res<V, E>.toResult(): Result<V> =
     if (inlineValue is Failure) Result.failure(inlineValue.error as E)
     else Result.success(inlineValue as V)
+
+/**
+ * Converts this [Res] to a stdlib [Result], using [transform] to wrap a non-throwable error
+ * into a [Throwable]. Saves callers from `.mapError(::wrap).toResult()`.
+ *
+ * @param transform converts the failure error into a [Throwable] for [Result.failure].
+ */
+public inline fun <V, E> Res<V, E>.toResult(transform: (E) -> Throwable): Result<V> {
+    contract { callsInPlace(transform, InvocationKind.AT_MOST_ONCE) }
+    return if (inlineValue is Failure) Result.failure(transform(inlineValue.error as E))
+    else Result.success(inlineValue as V)
+}
+
+/**
+ * Performs [onOk] on the Ok value or [onFail] on the Fail error, returning `this` unchanged for
+ * chaining. Sugar for chained `onOk { ... }.onFail { ... }`.
+ */
+public inline fun <V, E> Res<V, E>.tap(
+    onOk: (V) -> Unit = {},
+    onFail: (E) -> Unit = {},
+): Res<V, E> {
+    contract {
+        callsInPlace(onOk, InvocationKind.AT_MOST_ONCE)
+        callsInPlace(onFail, InvocationKind.AT_MOST_ONCE)
+    }
+    if (inlineValue is Failure) onFail(inlineValue.error as E)
+    else onOk(inlineValue as V)
+    return this
+}

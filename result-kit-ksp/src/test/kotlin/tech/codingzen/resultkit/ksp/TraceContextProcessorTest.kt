@@ -7,6 +7,7 @@ import com.tschuchort.compiletesting.symbolProcessorProviders
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -417,6 +418,194 @@ class TraceContextProcessorTest {
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
         val src = result.generatedSource("QuotedRepoTraced")
         assertTrue(src.contains("\\\""), "Expected escaped quotes in generated source, got: $src")
+    }
+
+    @Test
+    fun `abstract property on interface is delegated`() {
+        val source = SourceFile.kotlin("PropertyRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface PropertyRepo {
+                val name: String
+                var version: Int
+                fun fetch(): Res<String, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("PropertyRepoTraced")
+        assertTrue(src.contains("override val name:"), "Expected val name override, got: $src")
+        assertTrue(src.contains("get() = delegate.name"))
+        assertTrue(src.contains("override var version:"), "Expected var version override, got: $src")
+        assertTrue(src.contains("set(value) { delegate.version = value }"))
+    }
+
+    @Test
+    fun `interface with multiple type-parameter bounds emits where clause`() {
+        val source = SourceFile.kotlin("MultiBoundRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface MultiBoundRepo<T> where T : Comparable<T>, T : CharSequence {
+                fun first(): Res<T, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("MultiBoundRepoTraced")
+        assertTrue(src.contains("where T :"), "Expected where clause, got: $src")
+    }
+
+    @Test
+    fun `method with multiple type-parameter bounds emits where clause`() {
+        val source = SourceFile.kotlin("MethodMultiBound.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface MethodMultiBoundRepo {
+                fun <T> sort(items: List<T>): Res<List<T>, String> where T : Comparable<T>, T : CharSequence
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("MethodMultiBoundRepoTraced")
+        assertTrue(src.contains("where T :"), "Expected where clause on method, got: $src")
+    }
+
+    @Test
+    fun `interface with contravariant type parameter preserves variance`() {
+        val source = SourceFile.kotlin("Sink.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface Sink<in T> {
+                fun accept(item: T): Res<Unit, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("SinkTraced")
+        assertTrue(src.contains("class SinkTraced<in T>"), "Expected 'in T', got: $src")
+    }
+
+    @Test
+    fun `interface with covariant type parameter preserves variance`() {
+        val source = SourceFile.kotlin("Source.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface Source<out T> {
+                fun produce(): Res<T, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("SourceTraced")
+        assertTrue(src.contains("class SourceTraced<out T>"), "Expected 'out T', got: $src")
+    }
+
+    @Test
+    fun `non-Any equals overload is not skipped`() {
+        val source = SourceFile.kotlin("CustomEquals.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            data class User(val id: Int)
+
+            @TraceContext
+            interface CustomEqualsRepo {
+                fun equals(other: User): Res<Boolean, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("CustomEqualsRepoTraced")
+        assertTrue(src.contains("override"), "Expected an override of equals(User), got: $src")
+        assertTrue(src.contains("equals(other: tech.codingzen.resultkit.ksp.test.User)"), "Expected user-defined equals to be implemented, got: $src")
+    }
+
+    @Test
+    fun `interface in default package compiles`() {
+        val source = SourceFile.kotlin("DefaultPkgRepo.kt", """
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface DefaultPkgRepo {
+                fun fetch(): Res<String, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("DefaultPkgRepoTraced")
+        assertFalse(src.lineSequence().any { it.trim() == "package" || it.startsWith("package ") }, "Expected no package directive in default-package output, got: $src")
+    }
+
+    @Test
+    fun `TraceMessage with literal dollar is escaped`() {
+        val source = SourceFile.kotlin("DollarMessage.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceMessage
+
+            @TraceContext
+            interface DollarRepo {
+                @TraceMessage("price ${'$'}5 for {id}")
+                fun findById(id: Int): Res<String, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("DollarRepoTraced")
+        // Escaped literal dollar in generated string literal
+        assertTrue(src.contains("\\\$5"), "Expected escaped literal dollar, got: $src")
+        // Live interpolation for the param ref
+        assertTrue(src.contains("\$id"), "Expected interpolated id, got: $src")
+    }
+
+    @Test
+    fun `TraceMessage referencing undefined parameter fails processor with clear error`() {
+        val source = SourceFile.kotlin("BadMessage.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceMessage
+
+            @TraceContext
+            interface BadRepo {
+                @TraceMessage("loading {userId}")
+                fun findById(id: Int): Res<String, String>
+            }
+        """.trimIndent())
+        // KSP runs in pass 1; the processor logs an error and the compilation fails there.
+        val kspComp = KotlinCompilation().apply {
+            this.sources = listOf(source)
+            symbolProcessorProviders = listOf(TraceContextProcessorProvider())
+            inheritClassPath = true
+            messageOutputStream = System.out
+        }
+        val res = kspComp.compile()
+        assertTrue(
+            res.exitCode != KotlinCompilation.ExitCode.OK,
+            "Expected compilation to fail when @TraceMessage references undefined parameter; got ${res.exitCode}",
+        )
+        assertTrue(
+            res.messages.contains("undefined parameter") && res.messages.contains("userId"),
+            "Expected error to mention undefined parameter 'userId', got: ${res.messages}",
+        )
     }
 
     // -- test fixture --

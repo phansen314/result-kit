@@ -5,6 +5,10 @@ package tech.codingzen.resultkit
 /**
  * DSL scope for [rail] blocks, providing short-circuit operations on [Res] values.
  *
+ * Naming convention: [fail] is the verb used inside a rail to short-circuit; [Res.failure] is the
+ * noun used at the factory level to construct a Fail [Res] outside any rail. They are distinct
+ * operations with different return types.
+ *
  * **Warning:** Do not use raw `try { } catch(e: Throwable)` inside a `rail {}` block.
  * The DSL uses an internal exception (`FailException`, a direct [Throwable] subclass) for
  * control flow, and `catch(Throwable)` will silently swallow it, breaking the railway.
