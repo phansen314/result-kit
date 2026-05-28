@@ -527,20 +527,20 @@ val user = fetchUser(id).orFailContext { "fetching user $id" }
 ### Reading context at the boundary
 
 ```kotlin
-when (val result = processOrder(id)) {
-    // fold with frames
-    else -> result.fold(
-        onOk = { order -> respond(order) },
-        onFail = { error, frames ->
-            logger.error(result.renderContext())
-            respond(error)
-        },
-    )
-}
+val result: Res<Order, AppError> = processOrder(id)
 
-// or extract individually
+// Frame-aware fold (note the two-arg onFail lambda — disambiguates from the standard fold)
+result.fold(
+    onOk = { order -> respond(order) },
+    onFail = { error, frames ->
+        logger.error(result.renderContext())
+        respond(error)
+    },
+)
+
+// Or extract individually
 val frames: List<Frame> = result.contextChain()
-val summary: String = result.contextSummary()   // "frame0 → frame1 → error.toString()"
+val summary: String = result.contextSummary()        // "frame0 → frame1 → error.toString()"
 val logMap: Map<String, Any?> = result.contextMap()  // for structured/JSON logging
 ```
 
@@ -592,7 +592,7 @@ interface AuthService {
 
     // @TraceInclude opts a param's value in explicitly
     fun findById(@TraceInclude id: Int): Res<User, AuthError>
-    // generated: "AuthService.findById(id=$id)"
+    // generated: "AuthService.findById(id=${id})"
 
     // @TraceMessage for full custom control
     @TraceMessage("authenticating {username}")
@@ -608,7 +608,7 @@ KSP generates `AuthServiceTraced`. Wire it up:
 val auth: AuthService = AuthServiceTraced(delegate = realAuthService)
 ```
 
-Every call to `auth.login(...)` now automatically attaches a context frame with the message `"authenticating user $username"` (password excluded) and a `SourceLocation` pointing to the interface declaration. Non-`Res` methods are delegated as-is.
+Every call to `auth.authenticate(...)` now automatically attaches a context frame with the message `"authenticating ${username}"` (the `password` parameter is not interpolated — it has no `@TraceInclude`) and a `SourceLocation` pointing to the interface declaration. `auth.login(...)` (no `@TraceMessage`) gets the auto-generated `"AuthService.login(username, password)"` — parameter *names* only, since no `@TraceInclude`s opt their values in. Non-`Res` methods are delegated as-is.
 
 See the [API Reference](../README.md#tracecontext-annotations-result-kit-ksp) for annotation options.
 

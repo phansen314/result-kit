@@ -34,7 +34,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [1.1.0]
 
-Major redesign around the `Res<V, E>` inline value class and the `rail {}` DSL. Not backwards-compatible with 1.0.0.
+Major redesign around the `Res<V, E>` inline value class and the `rail {}` DSL. **This release is a one-time semver break from 1.0.0** — the pre-1.0 era is closed, and 1.x onwards follows semver strictly. See [Stability](README.md#stability) for the policy going forward.
 
 ### Added
 - `Res<V, E>` `@JvmInline value class` (zero allocation on the Ok path); `Res.ok` / `Res.failure` factories on the companion.

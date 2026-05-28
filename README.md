@@ -17,11 +17,11 @@ binding {
 // Result-Kit: define the translation once, reuse it
 rail {
     val http = catching { e -> AppError.Network(e.message) }
-    val db   = catching { e -> AppError.Database(e.message) }
+    val sql  = catching { e -> AppError.Database(e.message) }
 
     val user     = http { httpClient.getUser(id) }
     val prefs    = http { httpClient.getPrefs(user.id) }
-    val settings = db { db.getSettings(user.id) }
+    val settings = sql  { db.getSettings(user.id) }
     Dashboard(user, prefs, settings)
 }
 ```
@@ -65,6 +65,32 @@ dependencies {
 ```
 
 The KSP module requires the [KSP Gradle plugin](https://kotlinlang.org/docs/ksp-quickstart.html).
+
+## Stability
+
+Result-Kit follows [Semantic Versioning](https://semver.org/). From `1.1.0` onward:
+
+- **Major versions** (`2.0.0`, `3.0.0`) may include breaking API changes — renames, removed functions, semantic shifts. Migration guidance lives in the [CHANGELOG](CHANGELOG.md).
+- **Minor versions** (`1.2.0`, `1.3.0`) add new APIs without breaking existing ones. Safe to bump without code changes.
+- **Patch versions** (`1.1.1`, `1.1.2`) are bug fixes only — no behavioral surprises.
+
+**Binary compatibility** is tracked with the [`binary-compatibility-validator`](https://github.com/Kotlin/binary-compatibility-validator) Gradle plugin. The captured public ABI lives in `result-kit/api/result-kit.api`; CI fails on accidental drift. This matters because almost every public API is `inline` and references `@PublishedApi internal` symbols (notably `Failure`, `FailException`, `Res.unsafeOk`) — any silent shape change to those would break downstream jars compiled against an older version.
+
+**What counts as a breaking change:**
+
+- Any API surface listed in the `.api` dump is part of the stability commitment.
+- The names of public scope types (`ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`, `ValidationMapping`) and factory functions (`catching`, `mapping`, `catchingMapping`, `validation`, `rail`).
+- The semantics of frame propagation through `map`, `mapError`, `orElse`, `recover`, and rail boundaries.
+- Behavior of `FailException` (extends `Throwable`, no stack trace by default, honours `-Dresultkit.debug`).
+
+**What does not count as breaking:**
+
+- Adding new factory methods, extension functions, or overloads.
+- Improving error messages or KDoc.
+- Optimizing internal implementation while preserving observable behavior.
+- Changing the contents of generated KSP wrappers, as long as they still implement the interface contract.
+
+The library is JVM-only at present. Kotlin Multiplatform support is a future possibility but not committed.
 
 ## Quick Start
 
