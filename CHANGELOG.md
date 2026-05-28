@@ -23,6 +23,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 - KSP `@TraceContext` processor: type-parameter handling — generated wrappers preserve generic signatures and bounds correctly, including for `suspend` methods.
+- **KSP `@TraceContext` correctness sweep** (closes silent-codegen failures consumers would hit at compile time):
+  - **Extension-receiver methods** (e.g. `fun String.parse(): Res<...>`) are now correctly wrapped. Previously `fn.extensionReceiver` was ignored, emitting a non-extension override that failed to implement the interface. The wrapper now emits the receiver and delegates via `with(delegate) { this@<fn>.<fn>(args) }`.
+  - **Reserved-keyword parameter names** (`fun`, `class`, `in`, etc.) are now backtick-wrapped in both the signature and the delegate-call args. Previously emitted as bare identifiers → consumer's compile failed with a syntax error.
+  - **Windows path handling**: file paths are normalized from `\` to `/` before the package-relative path heuristic runs, and emitted `SourceLocation` literals escape any remaining `\` or `"` characters. Previously the heuristic always assumed forward slashes — broken on Windows builds.
+  - **Incremental builds**: `Dependencies(aggregating = false, ...)` (isolating mode) instead of `true`. KSP no longer reprocesses every wrapper when one unrelated annotated interface changes.
+  - **Unresolvable return type**: the processor now KSP-errors instead of silently falling back to `Unit`. Avoids a generated method whose return type contradicts the interface.
+  - **`@TraceMessage` / `@TraceInclude` interpolation** uses `${name}` (braces) form so keyword parameter references resolve correctly.
 - `withFrame` now performs the same scope-identity check as the `rail {}` boundary, so a `FailException` from a foreign rail scope passes through without having a context frame appended.
 
 ## [1.1.0]

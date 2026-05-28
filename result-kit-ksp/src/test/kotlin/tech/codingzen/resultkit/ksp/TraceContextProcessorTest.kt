@@ -110,7 +110,7 @@ class TraceContextProcessorTest {
         val src = result.generatedSource("SimpleRepoTraced")
         // findById(id: Int) should produce "SimpleRepo.findById(id)" — name only, no value by default
         assertTrue(src.contains("SimpleRepo.findById(id)"), "Got: $src")
-        assertTrue(!src.contains("\$id"), "Param value should not appear by default, got: $src")
+        assertTrue(!src.contains("\${id}"), "Param value should not appear by default, got: $src")
     }
 
     @Test
@@ -148,7 +148,7 @@ class TraceContextProcessorTest {
         val result = compile(source)
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
         val src = result.generatedSource("SvcTraced")
-        assertTrue(src.contains("loading user \$id"), "Got: $src")
+        assertTrue(src.contains("loading user \${id}"), "Got: $src")
         assertTrue(!src.contains("Svc.find("), "Auto-generated message should be replaced, got: $src")
     }
 
@@ -168,8 +168,8 @@ class TraceContextProcessorTest {
         val result = compile(source)
         assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
         val src = result.generatedSource("UserRepoTraced")
-        assertTrue(src.contains("id=\$id"), "TraceInclude param should emit value, got: $src")
-        assertTrue(!src.contains("\$version"), "Non-annotated param should not emit value, got: $src")
+        assertTrue(src.contains("id=\${id}"), "TraceInclude param should emit value, got: $src")
+        assertTrue(!src.contains("\${version}"), "Non-annotated param should not emit value, got: $src")
         assertTrue(src.contains("version"), "Non-annotated param name should still appear, got: $src")
     }
 
@@ -572,8 +572,8 @@ class TraceContextProcessorTest {
         val src = result.generatedSource("DollarRepoTraced")
         // Escaped literal dollar in generated string literal
         assertTrue(src.contains("\\\$5"), "Expected escaped literal dollar, got: $src")
-        // Live interpolation for the param ref
-        assertTrue(src.contains("\$id"), "Expected interpolated id, got: $src")
+        // Live interpolation for the param ref (now in `${name}` form)
+        assertTrue(src.contains("\${id}"), "Expected interpolated id, got: $src")
     }
 
     @Test
@@ -607,6 +607,382 @@ class TraceContextProcessorTest {
             "Expected error to mention undefined parameter 'userId', got: ${res.messages}",
         )
     }
+
+    // -- runtime tests covering TraceMessage interpolation, suspend, nullable, generics, extension --
+
+    @Test
+    fun `TraceMessage interpolates param value into frame message at runtime`() {
+        val ifaceSource = SourceFile.kotlin("InterpolatedRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceMessage
+
+            @TraceContext
+            interface InterpolatedRepo {
+                @TraceMessage("loading user {id}")
+                fun load(id: Int): Res<String, String>
+            }
+        """.trimIndent())
+        val runnerSource = SourceFile.kotlin("InterpolatedRunner.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.contextChain
+
+            fun runInterpolatedTest(): String {
+                val delegate = object : InterpolatedRepo {
+                    override fun load(id: Int): Res<String, String> = Res.failure("nope")
+                }
+                val res = InterpolatedRepoTraced(delegate).load(42)
+                val msg = res.contextChain().firstOrNull()?.message
+                    ?: return "FAIL: no frame attached"
+                return if (msg == "loading user 42") "OK" else "FAIL: got ${'$'}msg"
+            }
+        """.trimIndent())
+        val result = compile(ifaceSource, runnerSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val outcome = result.classLoader
+            .loadClass("tech.codingzen.resultkit.ksp.test.InterpolatedRunnerKt")
+            .getMethod("runInterpolatedTest")
+            .invoke(null) as String
+        assertEquals("OK", outcome)
+    }
+
+    @Test
+    fun `suspend method that fails after suspension carries context frame`() {
+        val ifaceSource = SourceFile.kotlin("AsyncFailRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface AsyncFailRepo {
+                suspend fun fetch(id: Int): Res<String, String>
+            }
+        """.trimIndent())
+        val runnerSource = SourceFile.kotlin("AsyncFailRunner.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.contextChain
+            import kotlinx.coroutines.delay
+            import kotlinx.coroutines.runBlocking
+
+            fun runAsyncFailTest(): String = runBlocking {
+                val delegate = object : AsyncFailRepo {
+                    override suspend fun fetch(id: Int): Res<String, String> {
+                        delay(1) // real suspension
+                        return Res.failure("network down")
+                    }
+                }
+                val res = AsyncFailRepoTraced(delegate).fetch(7)
+                if (!res.isFail) return@runBlocking "FAIL: expected Res.fail"
+                val frames = res.contextChain()
+                if (frames.isEmpty()) return@runBlocking "FAIL: expected frames"
+                val msg = frames.first().message
+                if (!msg.contains("AsyncFailRepo.fetch")) return@runBlocking "FAIL: bad msg ${'$'}msg"
+                "OK"
+            }
+        """.trimIndent())
+        val result = compile(ifaceSource, runnerSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val outcome = result.classLoader
+            .loadClass("tech.codingzen.resultkit.ksp.test.AsyncFailRunnerKt")
+            .getMethod("runAsyncFailTest")
+            .invoke(null) as String
+        assertEquals("OK", outcome)
+    }
+
+    @Test
+    fun `nullable param interpolates as null in message at runtime`() {
+        val ifaceSource = SourceFile.kotlin("NullableRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceInclude
+
+            @TraceContext
+            interface NullableRepo {
+                fun find(@TraceInclude name: String?): Res<Int, String>
+            }
+        """.trimIndent())
+        val runnerSource = SourceFile.kotlin("NullableRunner.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.contextChain
+
+            fun runNullableTest(): String {
+                val delegate = object : NullableRepo {
+                    override fun find(name: String?): Res<Int, String> = Res.failure("nope")
+                }
+                val res = NullableRepoTraced(delegate).find(null)
+                val msg = res.contextChain().firstOrNull()?.message
+                    ?: return "FAIL: no frame"
+                return if (msg.contains("name=null")) "OK" else "FAIL: ${'$'}msg"
+            }
+        """.trimIndent())
+        val result = compile(ifaceSource, runnerSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val outcome = result.classLoader
+            .loadClass("tech.codingzen.resultkit.ksp.test.NullableRunnerKt")
+            .getMethod("runNullableTest")
+            .invoke(null) as String
+        assertEquals("OK", outcome)
+    }
+
+    @Test
+    fun `generic method with bounds runs end-to-end through wrapper`() {
+        val ifaceSource = SourceFile.kotlin("BoundedRunRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface BoundedRunRepo {
+                fun <T : Comparable<T>> max(items: List<T>): Res<T, String>
+            }
+        """.trimIndent())
+        val runnerSource = SourceFile.kotlin("BoundedRunner.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.getOrNull
+
+            fun runBoundedTest(): String {
+                val delegate = object : BoundedRunRepo {
+                    override fun <T : Comparable<T>> max(items: List<T>): Res<T, String> =
+                        Res.ok(items.max())
+                }
+                val res = BoundedRunRepoTraced(delegate).max(listOf(3, 1, 4, 1, 5, 9, 2, 6))
+                return if (res.getOrNull() == 9) "OK" else "FAIL: ${'$'}{res.getOrNull()}"
+            }
+        """.trimIndent())
+        val result = compile(ifaceSource, runnerSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val outcome = result.classLoader
+            .loadClass("tech.codingzen.resultkit.ksp.test.BoundedRunnerKt")
+            .getMethod("runBoundedTest")
+            .invoke(null) as String
+        assertEquals("OK", outcome)
+    }
+
+    @Test
+    fun `extension receiver method runs end-to-end and attaches frame`() {
+        val ifaceSource = SourceFile.kotlin("ExtRunRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface ExtRunRepo {
+                fun String.parseAsInt(): Res<Int, String>
+            }
+        """.trimIndent())
+        val runnerSource = SourceFile.kotlin("ExtRunRunner.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.contextChain
+
+            fun runExtTest(): String {
+                val delegate = object : ExtRunRepo {
+                    override fun String.parseAsInt(): Res<Int, String> =
+                        this.toIntOrNull()?.let { Res.ok(it) } ?: Res.failure("not a number: ${'$'}this")
+                }
+                val traced: ExtRunRepo = ExtRunRepoTraced(delegate)
+                // Ok path
+                val okRes = with(traced) { "42".parseAsInt() }
+                if (!okRes.isOk) return "FAIL: expected Ok, got ${'$'}okRes"
+                // Fail path with frame
+                val failRes = with(traced) { "nope".parseAsInt() }
+                if (!failRes.isFail) return "FAIL: expected Fail"
+                val msg = failRes.contextChain().firstOrNull()?.message
+                    ?: return "FAIL: no frame on extension call"
+                if (!msg.contains("parseAsInt")) return "FAIL: ${'$'}msg"
+                return "OK"
+            }
+        """.trimIndent())
+        val result = compile(ifaceSource, runnerSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val outcome = result.classLoader
+            .loadClass("tech.codingzen.resultkit.ksp.test.ExtRunRunnerKt")
+            .getMethod("runExtTest")
+            .invoke(null) as String
+        assertEquals("OK", outcome)
+    }
+
+    // -- #9 interface default parameter values --
+
+    @Test
+    fun `interface method with default param value compiles and traced wrapper resolves default`() {
+        val ifaceSource = SourceFile.kotlin("DefaultRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface DefaultRepo {
+                fun find(id: Int, limit: Int = 10): Res<List<Int>, String>
+            }
+        """.trimIndent())
+        val runnerSource = SourceFile.kotlin("DefaultRunner.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.getOrNull
+
+            fun runDefaultTest(): String {
+                val delegate = object : DefaultRepo {
+                    override fun find(id: Int, limit: Int): Res<List<Int>, String> = Res.ok(List(limit) { it })
+                }
+                val traced: DefaultRepo = DefaultRepoTraced(delegate)
+                // Calling without `limit` argument exercises the interface-level default
+                val res = traced.find(id = 1)
+                val list = res.getOrNull() ?: return "FAIL: expected Ok"
+                if (list.size != 10) return "FAIL: default should be 10, got ${'$'}{list.size}"
+                return "OK"
+            }
+        """.trimIndent())
+        val result = compile(ifaceSource, runnerSource)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val outcome = result.classLoader
+            .loadClass("tech.codingzen.resultkit.ksp.test.DefaultRunnerKt")
+            .getMethod("runDefaultTest")
+            .invoke(null) as String
+        assertEquals("OK", outcome)
+    }
+
+    // -- #5 extension-receiver methods --
+
+    @Test
+    fun `extension receiver method emits override with receiver and delegates via with`() {
+        val source = SourceFile.kotlin("ExtRepo.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface ExtRepo {
+                fun String.parse(): Res<Int, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("ExtRepoTraced")
+        // Override carries the receiver type
+        assertTrue(src.contains("override fun kotlin.String.parse()"), "Expected extension override, got: $src")
+        // Body routes through `with(delegate) { this@parse.parse() }`
+        assertTrue(src.contains("with(delegate) { this@parse.parse() }"), "Expected with-delegate body, got: $src")
+        // Context still applied
+        assertTrue(src.contains(".context("), "Expected .context on extension method, got: $src")
+    }
+
+    @Test
+    fun `non-Res extension receiver method delegates without context`() {
+        val source = SourceFile.kotlin("ExtNonRes.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface ExtNonResRepo {
+                fun String.length2(): Int
+                fun fetch(): Res<Int, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("ExtNonResRepoTraced")
+        assertTrue(src.contains("override fun kotlin.String.length2()"), "Expected extension override, got: $src")
+        // Non-Res extension still uses with(delegate) but no .context
+        assertTrue(src.contains("with(delegate) { this@length2.length2() }"), "Expected with-delegate body, got: $src")
+        val length2Block = src.substringAfter("fun kotlin.String.length2()").substringBefore("override").substringBefore("}")
+        assertTrue(!length2Block.contains(".context("), "Non-Res extension should not have .context(), got: $length2Block")
+    }
+
+    @Test
+    fun `extension receiver method with params delegates all args`() {
+        val source = SourceFile.kotlin("ExtRepoArgs.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface ExtRepoArgs {
+                fun String.parseAt(offset: Int, base: Int): Res<Int, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("ExtRepoArgsTraced")
+        assertTrue(src.contains("with(delegate) { this@parseAt.parseAt(offset, base) }"), "Expected args forwarded, got: $src")
+    }
+
+    // -- #6 reserved-keyword parameter names --
+
+    @Test
+    fun `parameter named after a Kotlin keyword is backtick-escaped`() {
+        val source = SourceFile.kotlin("KeywordParam.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+
+            @TraceContext
+            interface KeywordRepo {
+                fun handle(`fun`: Int, `class`: String): Res<Unit, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("KeywordRepoTraced")
+        assertTrue(src.contains("`fun`: kotlin.Int"), "Expected backticked `fun` param, got: $src")
+        assertTrue(src.contains("`class`: kotlin.String"), "Expected backticked `class` param, got: $src")
+        assertTrue(src.contains("delegate.handle(`fun`, `class`)"), "Expected backticked args in delegate call, got: $src")
+    }
+
+    @Test
+    fun `keyword parameter with TraceInclude interpolates correctly`() {
+        val source = SourceFile.kotlin("KeywordInclude.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceInclude
+
+            @TraceContext
+            interface KwIncludeRepo {
+                fun call(@TraceInclude `fun`: String): Res<Unit, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("KwIncludeRepoTraced")
+        // Auto-message uses `${`fun`}` so the keyword resolves
+        assertTrue(src.contains("fun=\${`fun`}"), "Expected keyword interpolation, got: $src")
+    }
+
+    @Test
+    fun `TraceMessage referencing a keyword parameter uses backticks in interpolation`() {
+        val source = SourceFile.kotlin("KeywordTraceMsg.kt", """
+            package tech.codingzen.resultkit.ksp.test
+            import tech.codingzen.resultkit.Res
+            import tech.codingzen.resultkit.context.TraceContext
+            import tech.codingzen.resultkit.context.TraceMessage
+
+            @TraceContext
+            interface KwMsgRepo {
+                @TraceMessage("calling with {fun}")
+                fun call(`fun`: String): Res<Unit, String>
+            }
+        """.trimIndent())
+        val result = compile(source)
+        assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+        val src = result.generatedSource("KwMsgRepoTraced")
+        assertTrue(src.contains("calling with \${`fun`}"), "Expected backticked keyword in TraceMessage interpolation, got: $src")
+    }
+
+    // -- #10 unresolvable return type --
+    // A well-formed program should always have resolvable return types — so the error
+    // path is exercised by deleting the import of Res after the processor sees it.
+    // We can't easily simulate that; instead, the change from `?: "Unit"` to logger.error
+    // is verified by inspection. A regression test for the common case is unchanged: any
+    // missing-type situation should now fail processor compilation rather than silently
+    // generate a method that returns Unit.
 
     // -- test fixture --
 

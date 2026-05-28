@@ -67,7 +67,10 @@ internal class TraceContextProcessor(
             "<${ifaceTypeParams.joinToString(", ") { it.name.asString() }}>"
 
         val file = codeGenerator.createNewFile(
-            dependencies = Dependencies(aggregating = true, iface.containingFile!!),
+            // isolating: this wrapper depends only on its single source interface, not on every
+            // other @TraceContext-annotated interface in the module. Lets KSP skip the processor
+            // when unrelated interfaces change.
+            dependencies = Dependencies(aggregating = false, iface.containingFile!!),
             packageName = packageName,
             fileName = wrapperName,
         )
@@ -172,30 +175,56 @@ internal class TraceContextProcessor(
         val whereClauses = rendered.flatMap { it.whereClauses }
         val whereClause = if (whereClauses.isEmpty()) "" else " where ${whereClauses.joinToString(", ")}"
 
-        // Build parameter list
+        // Build parameter list. Backtick keyword names (e.g. `fun`, `class`) so the
+        // generated signature compiles.
         val params = fn.parameters.joinToString(", ") { param ->
-            val paramName = param.name?.asString() ?: "_"
+            val paramName = safeIdent(param.name?.asString() ?: "_")
             val resolvedType = param.type.resolve()
             val paramType = if (param.isVararg) varargElementType(resolvedType) else resolvedType.toTypeName()
             val varargMod = if (param.isVararg) "vararg " else ""
             "$varargMod$paramName: $paramType"
         }
 
-        // Build argument list for delegate call
+        // Build argument list for delegate call. Same backtick treatment.
         val args = fn.parameters.joinToString(", ") { param ->
-            val name = param.name?.asString() ?: "_"
+            val name = safeIdent(param.name?.asString() ?: "_")
             if (param.isVararg) "*$name" else name
         }
 
         // Return type
-        val returnType = fn.returnType?.resolve()?.toTypeName() ?: "Unit"
+        val returnType = fn.returnType?.resolve()?.toTypeName()
+        if (returnType == null) {
+            logger.error(
+                "Could not resolve return type of ${fn.simpleName.asString()}() — wrapper cannot be generated",
+                fn,
+            )
+            return
+        }
+
+        // Extension receiver (if this is a member-extension function on the interface):
+        //   `fun String.parse(): Res<...>` becomes `override fun String.parse(): Res<...>` in
+        //   the wrapper. The body delegates via `with(delegate) { this@parse.parse(args) }` —
+        //   `with(delegate)` puts the delegate in member-receiver position, and `this@<funName>`
+        //   names the outer extension receiver so the extension call resolves to delegate's
+        //   member-extension. Without this support, a Res-returning extension method would
+        //   silently emit a non-extension wrapper and fail to override the interface.
+        val extReceiverType = fn.extensionReceiver?.resolve()?.toTypeName()
+        val extReceiverPrefix = if (extReceiverType != null) "$extReceiverType." else ""
 
         // Signature
         val suspendMod = if (isSuspend) "suspend " else ""
-        out.writeln("    override ${suspendMod}fun $typeParamClause$fnName($params): $returnType$whereClause {")
+        out.writeln("    override ${suspendMod}fun $typeParamClause$extReceiverPrefix$fnName($params): $returnType$whereClause {")
+
+        // Build the delegate call. For extension methods, route through `with(delegate)`
+        // so the extension resolves on the delegate's interface.
+        val delegateCall = if (extReceiverType != null) {
+            "with(delegate) { this@${safeIdent(fnName)}.$fnName($args) }"
+        } else {
+            "delegate.$fnName($args)"
+        }
 
         if (!isResReturning) {
-            out.writeln("        return delegate.$fnName($args)")
+            out.writeln("        return $delegateCall")
         } else {
             // Build context message
             val ifaceName = iface.simpleName.asString()
@@ -208,19 +237,25 @@ internal class TraceContextProcessor(
             // location lambda entirely rather than emitting a misleading line=0.
             val fileLocation = fn.location as? FileLocation
 
-            out.writeln("        return delegate.$fnName($args)")
+            out.writeln("        return $delegateCall")
             if (fileLocation != null) {
                 val packagePath = iface.packageName.asString().replace('.', '/')
-                val absPath = fileLocation.filePath
+                // Normalize Windows backslashes to forward slashes so the heuristic below
+                // and the emitted literal both work cross-platform.
+                val absPath = fileLocation.filePath.replace('\\', '/')
                 val relPath = if (packagePath.isNotEmpty()) {
                     val relIdx = absPath.indexOf("/$packagePath/")
                     if (relIdx >= 0) absPath.substring(relIdx + 1) else absPath.substringAfterLast('/')
                 } else {
                     absPath.substringAfterLast('/')
                 }
+                // Escape characters that would break the generated string literal. After
+                // backslash-normalization above, the only remaining hazard is `"` in a path.
+                val relPathLiteral = relPath.replace("\\", "\\\\").replace("\"", "\\\"")
+                val fnNameLiteral = fnName.replace("\\", "\\\\").replace("\"", "\\\"")
                 out.writeln("            .context(")
                 out.writeln("                { $contextMsg },")
-                out.writeln("                { SourceLocation(\"$relPath\", ${fileLocation.lineNumber}, \"$fnName\") },")
+                out.writeln("                { SourceLocation(\"$relPathLiteral\", ${fileLocation.lineNumber}, \"$fnNameLiteral\") },")
                 out.writeln("            )")
             } else {
                 out.writeln("            .context { $contextMsg }")
@@ -259,14 +294,15 @@ internal class TraceContextProcessor(
 
             // Escape characters that would break the generated string literal. `$` must be
             // escaped before {param} interpolation rewrites — the rewrite step deliberately
-            // re-emits `$paramName`, and any literal `$` from the user's text would otherwise
+            // re-emits `${paramName}`, and any literal `$` from the user's text would otherwise
             // be interpreted as a Kotlin string interpolation in the generated source.
             val escaped = traceMessage
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("$", "\\$")
+            // Use `${name}` (braces) so keyword param names backtick-wrap cleanly: `${`fun`}`.
             val interpolated = escaped.replace(Regex("\\{(\\w+)\\}")) { match ->
-                "\$${match.groupValues[1]}"
+                "\${${safeIdent(match.groupValues[1])}}"
             }
             return "\"$interpolated\""
         }
@@ -276,7 +312,9 @@ internal class TraceContextProcessor(
         val paramParts = fn.parameters.joinToString(", ") { param ->
             val name = param.name?.asString() ?: "_"
             val includeValue = param.annotations.any { it.shortName.asString() == "TraceInclude" }
-            if (includeValue) "$name=\$$name" else name
+            // The displayed name is the user-facing label (no backticks); the interpolated
+            // reference uses ${safeIdent} so keyword params resolve correctly.
+            if (includeValue) "$name=\${${safeIdent(name)}}" else name
         }
         return "\"$ifaceName.$fnName($paramParts)\""
     }
@@ -339,6 +377,27 @@ internal class TraceContextProcessor(
 
     private fun OutputStream.writeln(line: String = "") {
         write("$line\n".toByteArray())
+    }
+
+    private companion object {
+        // Kotlin hard keywords — these cannot appear as bare identifiers in source.
+        // Soft/modifier keywords (e.g. `data`, `inline`, `open`) are context-sensitive and
+        // usually safe as identifiers, so they're not included here. Backtick-wrapping a
+        // non-keyword is always legal too, but unnecessary noise.
+        // Source: https://kotlinlang.org/docs/keyword-reference.html
+        private val KOTLIN_HARD_KEYWORDS = setOf(
+            "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if",
+            "in", "interface", "is", "null", "object", "package", "return", "super", "this",
+            "throw", "true", "try", "typealias", "typeof", "val", "var", "when", "while",
+        )
+        private val IDENT_REGEX = Regex("[A-Za-z_][A-Za-z0-9_]*")
+
+        /**
+         * Returns [name] wrapped in backticks if it would not parse as a bare identifier in
+         * generated Kotlin source (hard keyword, or contains characters outside [A-Za-z0-9_]).
+         */
+        fun safeIdent(name: String): String =
+            if (name in KOTLIN_HARD_KEYWORDS || !IDENT_REGEX.matches(name)) "`$name`" else name
     }
 }
 

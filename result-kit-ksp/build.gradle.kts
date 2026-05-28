@@ -19,6 +19,8 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlin.compile.testing.ksp)
     testImplementation(libs.ksp.api)
+    // Needed for runtime tests that compile-and-invoke wrappers around suspend methods.
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.test {
