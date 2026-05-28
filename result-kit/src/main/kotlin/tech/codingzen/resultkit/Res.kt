@@ -7,6 +7,7 @@ import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
 import tech.codingzen.resultkit.context.Frame
+import tech.codingzen.resultkit.context.FrameTrace
 
 @PublishedApi
 internal class Failure(
@@ -68,7 +69,10 @@ public value class Res<out V, out E> @PublishedApi internal constructor(
         // Defensive guard: Failure is internal, so user code can't pass one here.
         // Cost: one instanceof check per ok() call. Internal hot paths (map, recover)
         // use unsafeOk() to skip this check.
+        // @CheckReturnValue: IntelliJ flags an unused Res.ok(...) result — useful for catching
+        // `Res.ok(value)` inside rail{} where the caller meant to return it but forgot.
         @Suppress("NOTHING_TO_INLINE")
+        @javax.annotation.CheckReturnValue
         public inline fun <V> ok(value: V): Res<V, Nothing> {
             check(value !is Failure) { "Res.ok() received an internal sentinel value — this is a result-kit bug, please report it" }
             return Res(value)
@@ -78,9 +82,16 @@ public value class Res<out V, out E> @PublishedApi internal constructor(
          *
          * @param error the failure error to wrap.
          * @return a [Res] in the Fail state.
+         *
+         * **Inside `rail {}`, prefer [Rail.fail] over `Res.failure(e)`.** The latter is a value-
+         * producing factory — if the caller drops the result on the floor (e.g. as a dead
+         * expression mid-block), the failure is silently swallowed. `Rail.fail(e)` short-circuits
+         * the rail directly. IntelliJ flags discarded `Res.failure(...)` results via
+         * `@CheckReturnValue` to make this footgun visible.
          */
         // No guard needed — wrapping in Failure is always safe. Cost: one Failure allocation.
         @Suppress("NOTHING_TO_INLINE")
+        @javax.annotation.CheckReturnValue
         public inline fun <E> failure(error: E): Res<Nothing, E> = Res(Failure(error))
 
         // SAFETY: Callers must guarantee value is not a Failure instance.
@@ -124,6 +135,8 @@ public inline fun <V, E, T> Res<V, E>.fold(onOk: (V) -> T, onFail: (E) -> T): T 
 /**
  * Transforms the Ok value using [transform], leaving a Fail unchanged.
  *
+ * Frames attached to a Failure are preserved.
+ *
  * @param transform applied to the success value if this is Ok.
  * @return Ok with the transformed value, or the original Fail.
  */
@@ -135,6 +148,9 @@ public inline fun <V, E, U> Res<V, E>.map(transform: (V) -> U): Res<U, E> {
 
 /**
  * Transforms the Fail error using [transform], leaving an Ok unchanged.
+ *
+ * Frames attached to the Failure are preserved across the error transform — context survives
+ * error-type changes.
  *
  * @param transform applied to the failure error if this is Fail.
  * @return Fail with the transformed error, or the original Ok.
@@ -242,21 +258,34 @@ public inline fun <V, E> Res<V, E>.onFail(action: (E) -> Unit): Res<V, E> {
  * Returns the Ok value, or throws the Fail error directly.
  *
  * Requires `E : Throwable`. For non-throwable error types, use [getOrThrow] with a transform.
+ *
+ * Any context [Frame]s attached to the failure are added to the thrown error as
+ * [Throwable.addSuppressed] [FrameTrace] entries so the breadcrumb chain appears in standard
+ * stack-trace dumps.
  */
 @Suppress("NOTHING_TO_INLINE")
-public inline fun <V, E : Throwable> Res<V, E>.getOrThrow(): V =
-    if (inlineValue is Failure) throw inlineValue.error as E
-    else inlineValue as V
+public inline fun <V, E : Throwable> Res<V, E>.getOrThrow(): V {
+    if (inlineValue !is Failure) return inlineValue as V
+    val err = inlineValue.error as E
+    for (f in inlineValue.frames) err.addSuppressed(FrameTrace(f))
+    throw err
+}
 
 /**
  * Returns the Ok value, or throws the result of applying [transform] to the Fail error.
+ *
+ * Any context [Frame]s attached to the failure are added to the thrown error as
+ * [Throwable.addSuppressed] [FrameTrace] entries so the breadcrumb chain appears in standard
+ * stack-trace dumps.
  *
  * @param transform converts the failure error into a [Throwable] to throw.
  */
 public inline fun <V, E> Res<V, E>.getOrThrow(transform: (E) -> Throwable): V {
     contract { callsInPlace(transform, InvocationKind.AT_MOST_ONCE) }
-    return if (inlineValue is Failure) throw transform(inlineValue.error as E)
-    else inlineValue as V
+    if (inlineValue !is Failure) return inlineValue as V
+    val thrown = transform(inlineValue.error as E)
+    for (f in inlineValue.frames) thrown.addSuppressed(FrameTrace(f))
+    throw thrown
 }
 
 /**

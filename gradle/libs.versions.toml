@@ -4,11 +4,13 @@ ksp = "1.9.25-1.0.20"
 nmcp = "1.4.4"
 coroutines = "1.9.0"
 kotlin-compile-testing = "1.6.0"
+jsr305 = "3.0.2"
 
 [libraries]
 ksp-api = { module = "com.google.devtools.ksp:symbol-processing-api", version.ref = "ksp" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlin-compile-testing-ksp = { module = "com.github.tschuchortdev:kotlin-compile-testing-ksp", version.ref = "kotlin-compile-testing" }
+jsr305 = { module = "com.google.code.findbugs:jsr305", version.ref = "jsr305" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

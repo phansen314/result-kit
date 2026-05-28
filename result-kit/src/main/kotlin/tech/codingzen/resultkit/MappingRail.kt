@@ -10,20 +10,20 @@ package tech.codingzen.resultkit
  *
  * **Two modes of operation:**
  *
- * **Top-level** — create via [Rail.Companion.mapping], invoke to get [Res]:
+ * **Top-level** — create via [Rail.Companion.catchingMapping], invoke to get [Res]:
  * ```
- * val httpRail = Rail.mapping<HttpError, AppError>(
+ * val httpRail = Rail.catchingMapping<HttpError, AppError>(
  *     onError = { AppError.Network(it) },
  *     onException = { AppError.Unexpected(it) },
  * )
  * val result: Res<User, AppError> = httpRail { fetchUser(id) }
  * ```
  *
- * **Inside [rail] blocks** — create via [Rail.mapping], invoke to get unwrapped `V`
+ * **Inside [rail] blocks** — create via [Rail.catchingMapping], invoke to get unwrapped `V`
  * (short-circuits the outer scope on exception or error):
  * ```
  * val result = rail<Dashboard, AppError> {
- *     val http = mapping<HttpError>(
+ *     val http = catchingMapping<HttpError>(
  *         onError = { AppError.Network(it) },
  *         onException = { AppError.Unexpected(it) },
  *     )
@@ -36,7 +36,7 @@ package tech.codingzen.resultkit
  * wins and returns `V` directly (short-circuiting on error). The compiler enforces correct
  * usage — a return-type mismatch is a compile error.
  *
- * For exception-only catching, use [FailMappingRail].
+ * For exception-only catching, use [ExceptionMappingRail].
  * For typed-error-only mapping, use [ErrorMappingRail].
  */
 public class MappingRail<in D, E>(

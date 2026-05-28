@@ -3,6 +3,7 @@ package tech.codingzen.resultkit.context
 import tech.codingzen.resultkit.Res
 import tech.codingzen.resultkit.errorOrNull
 import tech.codingzen.resultkit.getOrNull
+import tech.codingzen.resultkit.getOrThrow
 import tech.codingzen.resultkit.map
 import tech.codingzen.resultkit.mapError
 import tech.codingzen.resultkit.rail
@@ -79,12 +80,12 @@ class ContextTest {
         assertEquals("value", result.getOrNull())
     }
 
-    // -- withContext inside rail {} --
+    // -- withFrame inside rail {} --
 
     @Test
-    fun `withContext inside rail appends frame on short-circuit`() {
+    fun `withFrame inside rail appends frame on short-circuit`() {
         val result = rail<Int, String> {
-            withContext("loading user") {
+            withFrame("loading user") {
                 Res.failure<String>("not found").orFail()
             }
         }
@@ -96,9 +97,9 @@ class ContextTest {
     }
 
     @Test
-    fun `withContext on Ok path returns value without frame`() {
+    fun `withFrame on Ok path returns value without frame`() {
         val result = rail<Int, String> {
-            withContext("no error here") {
+            withFrame("no error here") {
                 Res.ok<Int>(99).orFail()
             }
         }
@@ -108,10 +109,10 @@ class ContextTest {
     }
 
     @Test
-    fun `nested withContext stacks frames innermost-first`() {
+    fun `nested withFrame stacks frames innermost-first`() {
         val result = rail<Int, String> {
-            withContext("outer") {
-                withContext("inner") {
+            withFrame("outer") {
+                withFrame("inner") {
                     Res.failure<String>("err").orFail()
                 }
             }
@@ -123,10 +124,10 @@ class ContextTest {
     }
 
     @Test
-    fun `withContext with location only invokes location lambda on fail`() {
+    fun `withFrame with location only invokes location lambda on fail`() {
         var locInvoked = false
         val result = rail<Int, String> {
-            withContext("op", location = { locInvoked = true; SourceLocation("X.kt", 5) }) {
+            withFrame("op", location = { locInvoked = true; SourceLocation("X.kt", 5) }) {
                 Res.failure<String>("err").orFail()
             }
         }
@@ -136,10 +137,10 @@ class ContextTest {
     }
 
     @Test
-    fun `withContext with location does not invoke location lambda on success`() {
+    fun `withFrame with location does not invoke location lambda on success`() {
         var locInvoked = false
         val result = rail<Int, String> {
-            withContext("op", location = { locInvoked = true; SourceLocation("X.kt", 5) }) {
+            withFrame("op", location = { locInvoked = true; SourceLocation("X.kt", 5) }) {
                 42
             }
         }
@@ -182,9 +183,9 @@ class ContextTest {
     }
 
     @Test
-    fun `orFailContext and withContext combine correctly`() {
+    fun `orFailContext and withFrame combine correctly`() {
         val result = rail<Int, String> {
-            withContext("outer scope") {
+            withFrame("outer scope") {
                 Res.failure<String>("err").orFailContext { "inner op" }
             }
         }
@@ -407,8 +408,8 @@ class ContextTest {
     @Test
     fun `frame ordering index 0 is innermost context`() {
         val res = rail<Int, String> {
-            withContext("level2") {          // outermost
-                withContext("level1") {      // middle
+            withFrame("level2") {          // outermost
+                withFrame("level1") {      // middle
                     Res.failure<String>("err").orFailContext { "level0" }   // innermost
                 }
             }
@@ -421,7 +422,7 @@ class ContextTest {
     }
 
     @Test
-    fun `withContext does not append frame for FailException from foreign scope`() {
+    fun `withFrame does not append frame for FailException from foreign scope`() {
         // FailException and Rail are internal to the result-kit module, accessible here.
         val foreignScope = tech.codingzen.resultkit.Rail<String>()
         val foreignException = tech.codingzen.resultkit.FailException("foreign error", foreignScope)
@@ -429,7 +430,7 @@ class ContextTest {
         var escaped: tech.codingzen.resultkit.FailException? = null
         try {
             rail<Int, String> {
-                withContext("should not be added") {
+                withFrame("should not be added") {
                     // Conditional so the block's return type is Int, not Nothing
                     if (true) throw foreignException
                     0
@@ -441,16 +442,16 @@ class ContextTest {
 
         assertNotNull(escaped, "FailException from foreign scope should escape rail{}")
         assertSame(foreignException, escaped, "Exception should be rethrown unmodified")
-        assertTrue(escaped.frames.isEmpty(), "withContext must not add a frame: ${escaped.frames}")
+        assertTrue(escaped.frames.isEmpty(), "withFrame must not add a frame: ${escaped.frames}")
     }
 
-    // -- failMapping inside withContext --
+    // -- catching inside withFrame --
 
     @Test
-    fun `failMapping inside withContext catches exception, context applied on propagation`() {
+    fun `catching inside withFrame catches exception, context applied on propagation`() {
         val result = rail<Int, String> {
-            withContext("outer operation") {
-                val fm = failMapping { e: Exception -> "mapped: ${e.message}" }
+            withFrame("outer operation") {
+                val fm = catching { e: Exception -> "mapped: ${e.message}" }
                 fm { throw RuntimeException("kaboom") }
             }
         }
@@ -461,14 +462,14 @@ class ContextTest {
         assertEquals("outer operation", frames[0].message)
     }
 
-    // -- failMapping mapper throws inside withContext --
+    // -- catching mapper throws inside withFrame --
 
     @Test
-    fun `failMapping mapper that throws inside withContext raises ErrorMapperException`() {
+    fun `catching mapper that throws inside withFrame raises ErrorMapperException`() {
         val ex = assertFailsWith<tech.codingzen.resultkit.ErrorMapperException> {
             rail<Int, String> {
-                withContext("outer") {
-                    val fm = failMapping { _: Exception -> throw IllegalStateException("mapper broke") }
+                withFrame("outer") {
+                    val fm = catching { _: Exception -> throw IllegalStateException("mapper broke") }
                     fm<Int> { throw RuntimeException("original") }
                 }
             }
@@ -546,7 +547,7 @@ class ContextTest {
         val res: Res<Int, Int> = Res.failure(500)
             .context { "api call" }
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "Error $code" }
+            val http = mapping<Int> { code -> "Error $code" }
             res.orFail(http)
         }
         assertTrue(result.isFail)
@@ -554,6 +555,105 @@ class ContextTest {
         val frames = result.contextChain()
         assertEquals(1, frames.size)
         assertEquals("api call", frames[0].message)
+    }
+
+    // -- getOrThrow attaches frames as suppressed --
+
+    @Test
+    fun `getOrThrow attaches frames as suppressed FrameTrace entries`() {
+        val err = RuntimeException("boom")
+        val res: Res<Int, RuntimeException> = Res.failure(err)
+            .context { "outer" }
+            .context(
+                { "inner" },
+                { SourceLocation("X.kt", 10, "foo") },
+            )
+        val caught = try {
+            res.getOrThrow()
+            null
+        } catch (e: RuntimeException) { e }
+        assertNotNull(caught)
+        assertSame(err, caught)
+        val suppressed = caught.suppressed
+        assertEquals(2, suppressed.size)
+        assertTrue(suppressed[0] is FrameTrace)
+        assertEquals("outer", (suppressed[0] as FrameTrace).frame.message)
+        assertTrue(suppressed[1] is FrameTrace)
+        assertEquals("inner", (suppressed[1] as FrameTrace).frame.message)
+        assertEquals("X.kt:10 in foo", (suppressed[1] as FrameTrace).frame.location.toString())
+    }
+
+    @Test
+    fun `getOrThrow with transform attaches frames as suppressed FrameTrace entries`() {
+        val res: Res<Int, String> = Res.failure("boom")
+            .context { "step1" }
+            .context { "step2" }
+        val caught = try {
+            res.getOrThrow { IllegalStateException("transformed: $it") }
+            null
+        } catch (e: IllegalStateException) { e }
+        assertNotNull(caught)
+        assertEquals("transformed: boom", caught.message)
+        val suppressed = caught.suppressed
+        assertEquals(2, suppressed.size)
+        assertEquals("step1", (suppressed[0] as FrameTrace).frame.message)
+        assertEquals("step2", (suppressed[1] as FrameTrace).frame.message)
+    }
+
+    @Test
+    fun `getOrThrow on Fail with no frames adds no suppressed`() {
+        val err = RuntimeException("boom")
+        val res: Res<Int, RuntimeException> = Res.failure(err)
+        val caught = try {
+            res.getOrThrow()
+            null
+        } catch (e: RuntimeException) { e }
+        assertNotNull(caught)
+        assertSame(err, caught)
+        assertEquals(0, caught.suppressed.size)
+    }
+
+    // -- recover overload that exposes frames --
+
+    @Test
+    fun `recover with frames lambda observes frames on Fail, returns Ok with no frames`() {
+        val seenFrames = mutableListOf<String>()
+        val res: Res<Int, String> = Res.failure("boom")
+            .context { "outer" }
+            .context { "inner" }
+        val recovered = res.recover { _, frames ->
+            seenFrames += frames.map { it.message }
+            -1
+        }
+        assertTrue(recovered.isOk)
+        assertEquals(-1, recovered.getOrNull())
+        assertEquals(listOf("outer", "inner"), seenFrames)
+        assertEquals(emptyList(), recovered.contextChain())
+    }
+
+    @Test
+    fun `recover with frames lambda passes through Ok without invoking transform`() {
+        var invoked = false
+        val res: Res<Int, String> = Res.ok(42)
+        val recovered = res.recover { _, _ ->
+            invoked = true
+            -1
+        }
+        assertTrue(recovered.isOk)
+        assertEquals(42, recovered.getOrNull())
+        assertFalse(invoked, "transform must not run on Ok")
+    }
+
+    @Test
+    fun `recover with frames lambda receives empty list when no frames attached`() {
+        val res: Res<Int, String> = Res.failure("boom")
+        var seenSize = -1
+        val recovered = res.recover { _, frames ->
+            seenSize = frames.size
+            0
+        }
+        assertTrue(recovered.isOk)
+        assertEquals(0, seenSize)
     }
 
     @Test
@@ -565,7 +665,7 @@ class ContextTest {
                 { SourceLocation("UserRepo.kt", 10, "findById") },
             )
         val result = rail<Int, String> {
-            withContext("loading dashboard") {
+            withFrame("loading dashboard") {
                 res.orFail()
             }
         }

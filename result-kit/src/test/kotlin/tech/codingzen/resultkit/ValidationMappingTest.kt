@@ -236,7 +236,7 @@ class ValidationMappingTest {
         assertEquals("from res; from ensure", result.errorOrThrow())
     }
 
-    // -- check/checkOrNull in top-level ValidationMapping invoke --
+    // -- check/valueOrNull in top-level ValidationMapping invoke --
 
     @Test
     fun `top-level invoke check collects Fail error`() {
@@ -250,12 +250,12 @@ class ValidationMappingTest {
     }
 
     @Test
-    fun `top-level invoke checkOrNull returns value on Ok and null on Fail`() {
+    fun `top-level invoke valueOrNull returns value on Ok and null on Fail`() {
         val validate = ValidationMapping<String, String> { errors -> errors.joinToString("; ") }
         val result = validate {
-            val a = Res.ok(42).checkOrNull()
+            val a = Res.ok(42).valueOrNull()
             assertEquals(42, a)
-            val b: Int? = Res.failure("bad").checkOrNull()
+            val b: Int? = Res.failure("bad").valueOrNull()
             assertNull(b)
         }
         assertTrue(result.isFail)

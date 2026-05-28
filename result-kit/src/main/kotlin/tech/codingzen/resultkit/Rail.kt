@@ -9,14 +9,19 @@ package tech.codingzen.resultkit
  * noun used at the factory level to construct a Fail [Res] outside any rail. They are distinct
  * operations with different return types.
  *
+ * **Footgun:** inside `rail { }`, a bare `Res.failure(e)` whose value is discarded is silently
+ * swallowed — it constructs a Fail value but does nothing with it. Use [fail] (which throws and
+ * short-circuits) or return the `Res.failure(...)` from the block. `Res.failure` and `Res.ok` are
+ * annotated with `@CheckReturnValue` so IntelliJ flags discarded results.
+ *
  * **Warning:** Do not use raw `try { } catch(e: Throwable)` inside a `rail {}` block.
  * The DSL uses an internal exception (`FailException`, a direct [Throwable] subclass) for
  * control flow, and `catch(Throwable)` will silently swallow it, breaking the railway.
  *
- * Also avoid `catch(e: Exception)` inside [failMapping]`{ }` blocks — it will intercept
+ * Also avoid `catch(e: Exception)` inside [catching]`{ }` blocks — it will intercept
  * exceptions before the mapping can catch and translate them.
  *
- * Use [failMapping]`{ }` for safe exception handling instead.
+ * Use [catching]`{ }` for safe exception handling instead.
  */
 @RailDsl
 public class Rail<E> @PublishedApi internal constructor() {
@@ -55,12 +60,12 @@ public class Rail<E> @PublishedApi internal constructor() {
         return value ?: fail(error())
     }
 
-    /** Creates a [FailMappingRail] for catching exceptions within sub-blocks of this rail. */
-    public fun failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
-        FailMappingRail(mapError)
+    /** Creates an [ExceptionMappingRail] for catching exceptions within sub-blocks of this rail. */
+    public fun catching(mapError: (Exception) -> E): ExceptionMappingRail<E> =
+        ExceptionMappingRail(mapError)
 
     /** Creates an [ErrorMappingRail] for mapping typed errors from a different domain into this rail's error type. */
-    public fun <D> errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
+    public fun <D> mapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
         ErrorMappingRail(mapError)
 
     /**
@@ -68,13 +73,13 @@ public class Rail<E> @PublishedApi internal constructor() {
      *
      * Use when calling functions that can throw AND return [Res] with a typed error.
      */
-    public fun <D> mapping(
+    public fun <D> catchingMapping(
         onError: (D) -> E,
         onException: (Exception) -> E,
     ): MappingRail<D, E> = MappingRail(onError, onException)
 
     /**
-     * Member extension: catches exceptions thrown inside [block], maps them via [FailMappingRail.mapError],
+     * Member extension: catches exceptions thrown inside [block], maps them via [ExceptionMappingRail.mapError],
      * and short-circuits the outer [rail] with the mapped error.
      *
      * **Important:** [fail] calls inside [block] are **not** caught or mapped — they bypass the
@@ -82,12 +87,12 @@ public class Rail<E> @PublishedApi internal constructor() {
      * (subtypes of [Exception]) are caught and mapped. This is intentional: [fail] is explicit
      * control flow, while exceptions are unexpected failures that need translation.
      */
-    public inline operator fun <V> FailMappingRail<E>.invoke(block: Rail<E>.() -> V): V =
+    public inline operator fun <V> ExceptionMappingRail<E>.invoke(block: Rail<E>.() -> V): V =
         try {
             this@Rail.block()
         // No FailException catch needed — FailException extends Throwable (not Exception),
         // so it passes through catch(Exception) below. The outer rail {} catches it.
-        // (Compare with top-level FailMappingRail.invoke which owns its own Rail scope
+        // (Compare with top-level ExceptionMappingRail.invoke which owns its own Rail scope
         // and must catch FailException to convert it to Res.Fail.)
         // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
@@ -103,7 +108,7 @@ public class Rail<E> @PublishedApi internal constructor() {
      * Member extension: unwraps [res] if Ok, or maps the error via [ErrorMappingRail.mapError]
      * and short-circuits the outer [rail] with the mapped error.
      *
-     * Unlike [FailMappingRail.invoke], this does **not** catch exceptions — it only
+     * Unlike [ExceptionMappingRail.invoke], this does **not** catch exceptions — it only
      * translates typed errors between domains.
      */
     @Suppress("NOTHING_TO_INLINE")
@@ -142,7 +147,7 @@ public class Rail<E> @PublishedApi internal constructor() {
      * If any errors accumulated, maps them via [ValidationMapping.mapErrors]
      * and short-circuits this rail.
      *
-     * Follows the same invoke pattern as [FailMappingRail] — the member extension
+     * Follows the same invoke pattern as [ExceptionMappingRail] — the member extension
      * wins over the top-level invoke inside a [rail] block.
      */
     public inline operator fun <F> ValidationMapping<F, @UnsafeVariance E>.invoke(
@@ -231,18 +236,21 @@ public class Rail<E> @PublishedApi internal constructor() {
     }
 
     /**
-     * Executes [block] within this rail's scope. On short-circuit, prepends [message] as a context
+     * Executes [block] within this rail's scope. On short-circuit, appends [message] as a context
      * frame before re-throwing, so the failure carries the additional context.
+     *
+     * Named `withFrame` (not `withContext`) to avoid collision with `kotlinx.coroutines.withContext`,
+     * which is commonly imported in `suspend` code.
      *
      * ```
      * rail<Dashboard, AppError> {
-     *     val user = withContext("loading dashboard for user $userId") {
+     *     val user = withFrame("loading dashboard for user $userId") {
      *         fetchUser(userId).orFail()
      *     }
      * }
      * ```
      */
-    public inline fun <V> withContext(
+    public inline fun <V> withFrame(
         message: String,
         block: Rail<E>.() -> V,
     ): V {
@@ -256,12 +264,12 @@ public class Rail<E> @PublishedApi internal constructor() {
     }
 
     /**
-     * Executes [block] within this rail's scope. On short-circuit, prepends a context frame with
+     * Executes [block] within this rail's scope. On short-circuit, appends a context frame with
      * [message] and a source [location] before re-throwing.
      *
      * The [location] lambda is only invoked on the Fail path.
      */
-    public inline fun <V> withContext(
+    public inline fun <V> withFrame(
         message: String,
         location: () -> tech.codingzen.resultkit.context.SourceLocation,
         block: Rail<E>.() -> V,
@@ -279,34 +287,34 @@ public class Rail<E> @PublishedApi internal constructor() {
     }
 
     public companion object {
-        /** Creates a top-level [FailMappingRail] for catching exceptions and mapping them to typed errors. */
-        public fun <E> failMapping(mapError: (Exception) -> E): FailMappingRail<E> =
-            FailMappingRail(mapError)
+        /** Creates a top-level [ExceptionMappingRail] for catching exceptions and mapping them to typed errors. */
+        public fun <E> catching(mapError: (Exception) -> E): ExceptionMappingRail<E> =
+            ExceptionMappingRail(mapError)
 
         /** Creates a top-level [ErrorMappingRail] for mapping typed errors between domains. */
-        public fun <D, E> errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
+        public fun <D, E> mapping(mapError: (D) -> E): ErrorMappingRail<D, E> =
             ErrorMappingRail(mapError)
 
         /**
          * Convenience entry point that catches any [Exception] and returns it as the error type.
          *
-         * Equivalent to `Rail.failMapping { it }` followed by an invoke.
+         * Equivalent to `Rail.catching { it }` followed by an invoke.
          */
         public inline fun <V> attempt(block: Rail<Exception>.() -> V): Res<V, Exception> =
-            FailMappingRail<Exception> { it }(block)
+            ExceptionMappingRail<Exception> { it }(block)
 
         /**
          * Creates a [MappingRail] for use as a top-level entry point.
          *
          * ```
-         * val httpRail = Rail.mapping<HttpError, AppError>(
+         * val httpRail = Rail.catchingMapping<HttpError, AppError>(
          *     onError = { AppError.Network(it) },
          *     onException = { AppError.Unexpected(it) },
          * )
          * fun getUser(id: Int): Res<User, AppError> = httpRail { fetchUser(id) }
          * ```
          */
-        public fun <D, E> mapping(
+        public fun <D, E> catchingMapping(
             onError: (D) -> E,
             onException: (Exception) -> E,
         ): MappingRail<D, E> = MappingRail(onError, onException)
@@ -318,7 +326,7 @@ public class Rail<E> @PublishedApi internal constructor() {
 }
 
 // INVARIANT: Must extend Throwable directly (not Exception) — ErrorMapper catch blocks
-// in Rail.invoke and FailMappingRail.invoke use catch(Exception) to distinguish
+// in Rail.invoke and ExceptionMappingRail.invoke use catch(Exception) to distinguish
 // mapper failures from rail control flow. Changing this hierarchy breaks that silently.
 @PublishedApi
 internal class FailException(
@@ -328,7 +336,17 @@ internal class FailException(
 ) : Throwable(
     "result-kit: FailException escaped a rail{} block — avoid catching Throwable inside rail{} blocks"
 ) {
-    override fun fillInStackTrace(): Throwable = this
+    // Hot-path optimization: FailException is pure control flow, so capturing the JVM stack on
+    // every short-circuit is wasted work. The `-Dresultkit.debug=true` system property opts in to
+    // a real stack trace — useful when investigating a stray FailException leaking past a
+    // catch(Throwable) interceptor (Spring @ExceptionHandler, gRPC, Sentry, MDC). Read once at
+    // class init; toggling the property at runtime has no effect.
+    override fun fillInStackTrace(): Throwable =
+        if (DEBUG_STACK_TRACE) super.fillInStackTrace() else this
+
+    private companion object {
+        @JvmField val DEBUG_STACK_TRACE: Boolean = java.lang.Boolean.getBoolean("resultkit.debug")
+    }
 }
 
 /**

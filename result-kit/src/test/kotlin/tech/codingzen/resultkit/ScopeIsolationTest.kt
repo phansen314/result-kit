@@ -43,29 +43,29 @@ class ScopeIsolationTest {
         assertEquals(15, result.getOrNull())
     }
 
-    // -- FailMappingRail top-level invoke (outside rail {}) --
+    // -- ExceptionMappingRail top-level invoke (outside rail {}) --
 
     @Test
-    fun `FailMappingRail top-level invoke captures fail as Res Fail`() {
-        val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
+    fun `ExceptionMappingRail top-level invoke captures fail as Res Fail`() {
+        val appRail = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRail { fail("inner") }
         assertTrue(result.isFail)
         assertEquals("inner", result.errorOrThrow())
     }
 
     @Test
-    fun `FailMappingRail top-level invoke captures exception as Res Fail`() {
-        val appRail = FailMappingRail<String> { e -> "Caught: ${e.message}" }
+    fun `ExceptionMappingRail top-level invoke captures exception as Res Fail`() {
+        val appRail = ExceptionMappingRail<String> { e -> "Caught: ${e.message}" }
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
         assertTrue(result.isFail)
         assertEquals("Caught: boom", result.errorOrThrow())
     }
 
-    // -- FailMappingRail inside rail {} uses member extension (short-circuits outer) --
+    // -- ExceptionMappingRail inside rail {} uses member extension (short-circuits outer) --
 
     @Test
-    fun `FailMappingRail inside rail - fail short-circuits outer rail`() {
-        val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
+    fun `ExceptionMappingRail inside rail - fail short-circuits outer rail`() {
+        val appRail = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         val result = rail<Int, String> {
             // member extension wins — fail() short-circuits outer rail
             appRail { fail("inner") }
@@ -75,8 +75,8 @@ class ScopeIsolationTest {
     }
 
     @Test
-    fun `FailMappingRail inside rail - exception short-circuits outer rail`() {
-        val appRail = FailMappingRail<String> { e -> "Caught: ${e.message}" }
+    fun `ExceptionMappingRail inside rail - exception short-circuits outer rail`() {
+        val appRail = ExceptionMappingRail<String> { e -> "Caught: ${e.message}" }
         val result = rail<Int, String> {
             // member extension wins — exception mapped and short-circuits outer rail
             appRail { throw RuntimeException("boom") }
@@ -85,12 +85,12 @@ class ScopeIsolationTest {
         assertEquals("Caught: boom", result.errorOrThrow())
     }
 
-    // -- nested FailMappingRail member extension invoke --
+    // -- nested ExceptionMappingRail member extension invoke --
 
     @Test
-    fun `failMapping exception short-circuits outer rail not inner`() {
+    fun `catching exception short-circuits outer rail not inner`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "IO: ${e.message}" }
+            val io = catching { e -> "IO: ${e.message}" }
             io { throw RuntimeException("disk fail") }
         }
         assertTrue(result.isFail)
@@ -98,9 +98,9 @@ class ScopeIsolationTest {
     }
 
     @Test
-    fun `failMapping success returns value in outer rail`() {
+    fun `catching success returns value in outer rail`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "IO: ${e.message}" }
+            val io = catching { e -> "IO: ${e.message}" }
             val x = io { 10 }
             x + 5
         }
@@ -111,9 +111,9 @@ class ScopeIsolationTest {
     // -- inner rail FailException passthrough in member extension --
 
     @Test
-    fun `inner rail FailException passes through failMapping member extension`() {
+    fun `inner rail FailException passes through catching member extension`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "IO: ${e.message}" }
+            val io = catching { e -> "IO: ${e.message}" }
             io {
                 // nested rail's FailException is a Throwable, not Exception —
                 // must pass through the member extension's catch(Exception) unimpeded
@@ -164,8 +164,8 @@ class ScopeIsolationTest {
     }
 
     @Test
-    fun `FailMappingRail top-level invoke nested inside rail isolates scopes`() {
-        val appRail = FailMappingRail<Int> { e -> e.message?.length ?: 0 }
+    fun `ExceptionMappingRail top-level invoke nested inside rail isolates scopes`() {
+        val appRail = ExceptionMappingRail<Int> { e -> e.message?.length ?: 0 }
         val result = rail<Int, String> {
             val inner: Res<Int, Int> = appRail { fail(99) }
             // inner rail's fail(99) is caught by appRail's scope, not the outer rail
@@ -176,8 +176,8 @@ class ScopeIsolationTest {
     }
 
     @Test
-    fun `CancellationException in FailMappingRail propagates through`() {
-        val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
+    fun `CancellationException in ExceptionMappingRail propagates through`() {
+        val appRail = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         assertFailsWith<CancellationException> {
             rail<Int, String> {
                 val inner: Res<Int, String> = appRail { throw CancellationException("cancelled") }

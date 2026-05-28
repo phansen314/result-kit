@@ -17,7 +17,7 @@ import kotlin.contracts.contract
  * an internal exception (`FailException`, a direct [Throwable] subclass) for control flow,
  * and `catch(Throwable)` will silently swallow it, breaking the railway.
  *
- * Also avoid `catch(e: Exception)` inside [Rail.failMapping]`{ }` blocks — it will intercept
+ * Also avoid `catch(e: Exception)` inside [Rail.catching]`{ }` blocks — it will intercept
  * exceptions before the mapping can catch and translate them.
  */
 public inline fun <V, E> rail(block: Rail<E>.() -> V): Res<V, E> {

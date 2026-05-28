@@ -113,3 +113,31 @@ public inline fun <V, E, T> Res<V, E>.fold(
     else
         onOk(inlineValue as V)
 }
+
+/**
+ * Frame-aware variant of [tech.codingzen.resultkit.recover]. Converts a Fail to Ok by applying
+ * [transform] to both the error and its context frames. An Ok passes through unchanged.
+ *
+ * The frames are passed to the transform before being discarded — use this when recovery
+ * needs to observe the trail (e.g. logging the recovered failure with full context) without
+ * splitting into a separate `.tap` + `.recover` chain.
+ *
+ * Disambiguated from the standard `recover(transform: (E) -> V)` by the two-parameter lambda.
+ *
+ * ```
+ * val safe: Res<Config, Nothing> = loadFromDisk().recover { err, frames ->
+ *     logger.warn("falling back to defaults — was: ${frames.joinToString(" / ")}, err=$err")
+ *     Config.defaults()
+ * }
+ * ```
+ */
+@OptIn(ExperimentalContracts::class)
+public inline fun <V, E> Res<V, E>.recover(
+    transform: (error: E, context: List<Frame>) -> @UnsafeVariance V,
+): Res<V, Nothing> {
+    contract { callsInPlace(transform, InvocationKind.AT_MOST_ONCE) }
+    return if (inlineValue is Failure)
+        Res.unsafeOk(transform(inlineValue.error as E, inlineValue.frames))
+    else
+        Res(inlineValue)
+}

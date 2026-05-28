@@ -8,8 +8,8 @@
 > - `Res<V, E>` vs `Either<E, A>` (parameter order, naming conventions, `Left`/`Right` semantics)
 > - Inline value class vs sealed class (allocation, `when` exhaustiveness)
 > - `rail {}` vs `either {}`/Raise DSL (short-circuit mechanisms)
-> - Error mapping: `failMapping`/`errorMapping`/`mapping` vs `withError`/`catch`
-> - Exception handling: `failMapping` vs `Effect`/`catch`
+> - Error mapping: `catching`/`mapping`/`catchingMapping` vs `withError`/`catch`
+> - Exception handling: `catching` vs `Effect`/`catch`
 > - Dependency footprint: zero deps vs Arrow ecosystem (`arrow-core`, `arrow-fx-coroutines`, etc.)
 > - Error accumulation: `zipOrAccumulate` vs Arrow's `zipOrAccumulate`/`mapOrAccumulate`
 > - Learning curve and API surface size

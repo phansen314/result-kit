@@ -8,7 +8,7 @@
 > - Typed errors: `Res<V, E>` vs `Result<V, E>` (same concept, different API shapes)
 > - DSL: `rail {}` + `orFail()` vs `binding {}` (coroutine-based short-circuit)
 > - Inline value class (`Res`) vs sealed class (`Result`)
-> - Error mapping scopes (`failMapping`, `errorMapping`, `mapping`) vs manual `mapError`/`get`/`getError`
+> - Error mapping scopes (`catching`, `mapping`, `catchingMapping`) vs manual `mapError`/`get`/`getError`
 > - Composition: `zip`/`zipOrAccumulate` vs `zip`/`zipOrAccumulateWith`
 > - Iterable extensions comparison
 > - Exception handling: `Rail.attempt` vs `runCatching`

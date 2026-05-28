@@ -13,6 +13,10 @@ repositories {
 }
 
 dependencies {
+    // compileOnly: IntelliJ-honoured @CheckReturnValue on Res.ok/Res.failure flags discarded
+    // factory results (e.g. Res.failure(e) inside rail{}). Annotation is stripped at runtime —
+    // the published artifact has zero runtime dependencies.
+    compileOnly(libs.jsr305)
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
 }

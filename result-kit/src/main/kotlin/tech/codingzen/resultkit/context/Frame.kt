@@ -41,3 +41,23 @@ public data class SourceLocation(
         }
     }
 }
+
+/**
+ * A [Throwable] view of a single context [Frame], used to attach context to thrown errors via
+ * [Throwable.addSuppressed].
+ *
+ * When `Res<V, E : Throwable>.getOrThrow()` throws the underlying error, each attached frame is
+ * added as a suppressed `FrameTrace` so the breadcrumb chain survives the JVM throw boundary and
+ * appears in standard stack-trace dumps. Stack trace is disabled — only the frame's message and
+ * location carry information.
+ */
+public class FrameTrace(public val frame: Frame) : Throwable(
+    buildString {
+        append("context: ")
+        append(frame.message)
+        frame.location?.let { append(" at ").append(it) }
+    },
+    /* cause = */ null,
+    /* enableSuppression = */ false,
+    /* writableStackTrace = */ false,
+)

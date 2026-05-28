@@ -113,7 +113,7 @@ class MappingRailTest {
 
     @Test
     fun `top-level invoke reusable across multiple calls`() {
-        val httpRail = Rail.mapping<Int, String>(
+        val httpRail = Rail.catchingMapping<Int, String>(
             onError = { "Code: $it" },
             onException = { "Exception: ${it.message}" },
         )
@@ -228,7 +228,7 @@ class MappingRailTest {
     @Test
     fun `member extension catches exception and maps via onException`() {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { "Code: $it" },
                 onException = { "Exception: ${it.message}" },
             )
@@ -241,7 +241,7 @@ class MappingRailTest {
     @Test
     fun `member extension maps Fail error via onError`() {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { "Code: $it" },
                 onException = { "Exception: ${it.message}" },
             )
@@ -254,7 +254,7 @@ class MappingRailTest {
     @Test
     fun `member extension unwraps Ok value`() {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { "Code: $it" },
                 onException = { "Exception: ${it.message}" },
             )
@@ -267,7 +267,7 @@ class MappingRailTest {
     @Test
     fun `member extension fail bypasses both mappers`() {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { "Mapped: $it" },
                 onException = { "Caught: ${it.message}" },
             )
@@ -281,7 +281,7 @@ class MappingRailTest {
     fun `member extension rethrows CancellationException`() {
         assertFailsWith<CancellationException> {
             rail<Int, String> {
-                val http = mapping<Int>(
+                val http = catchingMapping<Int>(
                     onError = { "Code: $it" },
                     onException = { "Exception: ${it.message}" },
                 )
@@ -295,7 +295,7 @@ class MappingRailTest {
         val error = object : Error("fatal") {}
         assertFailsWith<Error> {
             rail<Int, String> {
-                val http = mapping<Int>(
+                val http = catchingMapping<Int>(
                     onError = { "Code: $it" },
                     onException = { "Exception: ${it.message}" },
                 )
@@ -307,7 +307,7 @@ class MappingRailTest {
     @Test
     fun `member extension reusable across multiple calls`() {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { "Code: $it" },
                 onException = { "Exception: ${it.message}" },
             )
@@ -322,7 +322,7 @@ class MappingRailTest {
     @Test
     fun `member extension works with suspend lambdas`() = runTest {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { "Code: $it" },
                 onException = { "Exception: ${it.message}" },
             )
@@ -339,7 +339,7 @@ class MappingRailTest {
     fun `member extension ErrorMapperException wraps when onException mapper throws`() {
         val ex = assertFailsWith<ErrorMapperException> {
             rail<Int, String> {
-                val http = mapping<Int>(
+                val http = catchingMapping<Int>(
                     onError = { "Code: $it" },
                     onException = { throw IllegalStateException("mapper broke") },
                 )
@@ -355,7 +355,7 @@ class MappingRailTest {
     @Test
     fun `member extension onError throw falls into Exception catch and maps via onException`() {
         val result = rail<Int, String> {
-            val http = mapping<Int>(
+            val http = catchingMapping<Int>(
                 onError = { throw IllegalStateException("mapper broke") },
                 onException = { "Exception: ${it.message}" },
             )
@@ -370,7 +370,7 @@ class MappingRailTest {
     fun `member extension ErrorMapperException when both onError and onException throw`() {
         val ex = assertFailsWith<ErrorMapperException> {
             rail<Int, String> {
-                val http = mapping<Int>(
+                val http = catchingMapping<Int>(
                     onError = { throw IllegalStateException("onError broke") },
                     onException = { throw IllegalArgumentException("onException broke") },
                 )
@@ -386,10 +386,10 @@ class MappingRailTest {
     // -- combined scenarios --
 
     @Test
-    fun `mapping and failMapping in the same rail block`() {
+    fun `mapping and catching in the same rail block`() {
         val result = rail<String, String> {
-            val io = failMapping { "IO: ${it.message}" }
-            val http = mapping<Int>(
+            val io = catching { "IO: ${it.message}" }
+            val http = catchingMapping<Int>(
                 onError = { "HTTP: $it" },
                 onException = { "Net: ${it.message}" },
             )
@@ -402,10 +402,10 @@ class MappingRailTest {
     }
 
     @Test
-    fun `mapping and errorMapping in the same rail block`() {
+    fun `mapping and mapping in the same rail block`() {
         val result = rail<String, String> {
-            val validate = errorMapping<Int> { "Validation: $it" }
-            val http = mapping<Int>(
+            val validate = mapping<Int> { "Validation: $it" }
+            val http = catchingMapping<Int>(
                 onError = { "HTTP: $it" },
                 onException = { "Net: ${it.message}" },
             )
@@ -420,9 +420,9 @@ class MappingRailTest {
     @Test
     fun `all four rail types work together`() {
         val result = rail<String, String> {
-            val io = failMapping { "IO: ${it.message}" }
-            val validate = errorMapping<Int> { "Validation: $it" }
-            val http = mapping<Int>(
+            val io = catching { "IO: ${it.message}" }
+            val validate = mapping<Int> { "Validation: $it" }
+            val http = catchingMapping<Int>(
                 onError = { "HTTP: $it" },
                 onException = { "Net: ${it.message}" },
             )
@@ -441,7 +441,7 @@ class MappingRailTest {
     fun `nested rail with inner mapping does not leak to outer rail`() {
         val result = rail<String, String> {
             val inner = rail<Int, String> {
-                val http = mapping<Int>(
+                val http = catchingMapping<Int>(
                     onError = { "HTTP: $it" },
                     onException = { "Net: ${it.message}" },
                 )

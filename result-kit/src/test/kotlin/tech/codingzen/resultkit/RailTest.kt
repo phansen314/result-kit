@@ -238,8 +238,8 @@ class RailTest {
         assertEquals(10, result.getOrNull())
     }
 
-    private fun failMappingRailNonLocalReturn(id: Int): Res<Int, String> {
-        val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
+    private fun exceptionMappingRailNonLocalReturn(id: Int): Res<Int, String> {
+        val appRail = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRail {
             if (id < 0) return Res.failure("negative")
             id * 2
@@ -248,8 +248,8 @@ class RailTest {
     }
 
     @Test
-    fun `non-local return works in FailMappingRail top-level invoke`() {
-        val result = failMappingRailNonLocalReturn(-1)
+    fun `non-local return works in ExceptionMappingRail top-level invoke`() {
+        val result = exceptionMappingRailNonLocalReturn(-1)
         assertTrue(result.isFail)
         assertEquals("negative", result.errorOrThrow())
     }

@@ -25,7 +25,7 @@ result-kit/          — core library (zero runtime dependencies)
     Rail.kt                — Rail<E> DSL scope, FailException, ErrorMapperException
     RailBuilder.kt         — rail {} entry point
     RailDsl.kt             — @RailDsl marker annotation
-    FailMappingRail.kt     — exception-catching scope
+    ExceptionMappingRail.kt     — exception-catching scope
     ErrorMappingRail.kt    — typed-error-mapping scope
     MappingRail.kt         — combined exception + typed-error scope
     Validator.kt           — error accumulator, validation {} entry point
@@ -68,8 +68,8 @@ Accessors:
 - `getOrNull(): V?` — Ok value or null
 - `errorOrNull(): E?` — Fail error or null
 - `getOrElse(default: (E) -> V): V`
-- `getOrThrow(): V` — requires `E : Throwable`
-- `getOrThrow(transform: (E) -> Throwable): V`
+- `getOrThrow(): V` — requires `E : Throwable`. Attached context frames are added to the thrown error as `Throwable.addSuppressed(FrameTrace(frame))` entries so the breadcrumb chain survives the JVM throw boundary and appears in standard stack dumps.
+- `getOrThrow(transform: (E) -> Throwable): V` — frames likewise attached as suppressed `FrameTrace` entries on the transformed throwable.
 - `errorOrThrow(): E` — throws ISE on Ok
 
 Transforms:
@@ -77,6 +77,7 @@ Transforms:
 - `map(transform): Res<U, E>` — transforms Ok, Fail passes through unchanged (including frames)
 - `mapError(transform): Res<V, F>` — transforms Fail error, **preserves frames**, Ok passes through
 - `recover(transform: (E) -> V): Res<V, Nothing>` — infallible Fail→Ok conversion. Frames are discarded (Ok carries no frames).
+- `recover(transform: (E, List<Frame>) -> V): Res<V, Nothing>` — frame-aware overload in `context` package; passes frames to the transform before they are discarded. Disambiguated by two-arg lambda shape.
 - `orElse(transform: (E) -> Res<V, F>): Res<V, F>` — fallible recovery. If the recovery also fails, original frames are prepended to the recovery's frames.
 - `flatMap(transform: (V) -> Res<U, E>): Res<U, E>` — escape hatch for chaining outside rail; prefer rail + orFail
 - `flatten(): Res<V, E>` — unwraps `Res<Res<V, E>, E>`
@@ -124,18 +125,18 @@ Inside `rail {}`, the receiver `Rail<E>` provides:
 **Context-aware short-circuit:**
 - `Res<V, E>.orFailContext(context: () -> String): V` — unwrap or short-circuit; appends `Frame(message=context())` to existing frames from the Failure. Lambda only evaluated on Fail.
 - `Res<V, E>.orFailContext(context, location): V` — same with `SourceLocation`
-- `withContext(message: String, block: Rail<E>.() -> V): V` — runs block; catches FailException from this scope, appends frame, rethrows. Foreign-scope FailExceptions pass through without modification.
-- `withContext(message: String, location: () -> SourceLocation, block): V` — same with location (lazy, only evaluated on fail)
+- `withFrame(message: String, block: Rail<E>.() -> V): V` — runs block; catches FailException from this scope, appends frame, rethrows. Foreign-scope FailExceptions pass through without modification.
+- `withFrame(message: String, location: () -> SourceLocation, block): V` — same with location (lazy, only evaluated on fail)
 
 **Scope factories:**
-- `failMapping(mapError: (Exception) -> E): FailMappingRail<E>`
-- `errorMapping(mapError: (D) -> E): ErrorMappingRail<D, E>`
-- `mapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>`
+- `catching(mapError: (Exception) -> E): ExceptionMappingRail<E>`
+- `mapping(mapError: (D) -> E): ErrorMappingRail<D, E>`
+- `catchingMapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>`
 - `validation(mapErrors: (List<F>) -> E): ValidationMapping<F, E>`
 
 **Companion factories** (top-level, return Res instead of short-circuiting):
-- `Rail.failMapping(...)`, `Rail.errorMapping(...)`, `Rail.mapping(...)`, `Rail.validation(...)`
-- `Rail.attempt(block: Rail<Exception>.() -> V): Res<V, Exception>` — convenience for `FailMappingRail<Exception> { it }(block)`
+- `Rail.catching(...)`, `Rail.mapping(...)`, `Rail.catchingMapping(...)`, `Rail.validation(...)`
+- `Rail.attempt(block: Rail<Exception>.() -> V): Res<V, Exception>` — convenience for `ExceptionMappingRail<Exception> { it }(block)`
 
 ### FailException
 
@@ -163,20 +164,20 @@ All three scope types follow a dual-invoke pattern:
 
 Kotlin member extension dispatch priority ensures the member extension wins inside `rail {}`.
 
-### FailMappingRail<E>
+### ExceptionMappingRail<E>
 
 Catches JVM exceptions (subtypes of `Exception`), maps them to `E`.
 
-Constructor: `FailMappingRail(mapError: (Exception) -> E)`
+Constructor: `ExceptionMappingRail(mapError: (Exception) -> E)`
 
-**Member extension (inside rail):** `operator fun <V> FailMappingRail<E>.invoke(block: Rail<E>.() -> V): V`
+**Member extension (inside rail):** `operator fun <V> ExceptionMappingRail<E>.invoke(block: Rail<E>.() -> V): V`
 - Runs block on the outer Rail receiver
 - `FailException` passes through (extends Throwable, not Exception)
 - `CancellationException` rethrown
 - Other exceptions caught → `fail(mapError(e))`
 - If mapError itself throws → `ErrorMapperException`
 
-**Top-level invoke:** `operator fun <V, E> FailMappingRail<E>.invoke(block: Rail<E>.() -> V): Res<V, E>`
+**Top-level invoke:** `operator fun <V, E> ExceptionMappingRail<E>.invoke(block: Rail<E>.() -> V): Res<V, E>`
 - Creates its own Rail scope
 - FailException from own scope → `Res(Failure(e.error, e.frames))`
 - FailException from foreign scope → rethrown
@@ -224,10 +225,13 @@ Operations:
 - `addAll(errors: Iterable<E>)` — bulk add
 - `Res<V, E>.check()` — if Fail, adds error; discards value
 - `Res<V, F>.check(mapError: (F) -> E)` — mapped variant
-- `Res<V, E>.checkOrNull(): V?` — if Fail, adds error, returns null; if Ok, returns value
-- `Res<V, F>.checkOrNull(mapError): V?` — mapped variant
-- `check(res)`, `check(res, mapError)` — standalone variants of above
-- `checkOrNull(res)`, `checkOrNull(res, mapError)` — standalone variants
+- `Res<V, E>.valueOrNull(): V?` — if Fail, adds error, returns null; if Ok, returns value. Suffix `OrNull` signals a footgun — dependent validations must null-check.
+- `Res<V, F>.valueOrNull(mapError): V?` — mapped variant
+- `Res<V, E>.checkOr(default: V): V` — like `valueOrNull` but returns [default] on Fail (non-null). Use when you have a sane fallback.
+- `Res<V, F>.checkOr(default, mapError): V` — mapped variant
+- `check(res)`, `check(res, mapError)` — standalone variants of `check`
+- `valueOrNull(res)`, `valueOrNull(res, mapError)` — standalone variants
+- `checkOr(default, res)`, `checkOr(default, res, mapError)` — standalone variants
 - `hasErrors: Boolean`
 - `errors(): List<E>` — defensive copy
 - `toRes(): Res<Unit, List<E>>` — Ok if clean, Fail with error list if not
@@ -288,9 +292,9 @@ Frames are stored in `Failure.frames: List<Frame>` (default `emptyList()`). Also
 | `.orFail()` inside rail | Throws `FailException(error, scope, inlineValue.frames)` — **preserves frames** |
 | `.orFail(mapError)` inside rail | Throws `FailException(mapError(error), scope, inlineValue.frames)` — **preserves frames** |
 | `.orFailContext { msg }` | Reads `inlineValue.frames`, appends new frame, throws with them — **correct** |
-| `withContext(msg) { block }` | Catches FailException from own scope, appends frame to `e.frames`, rethrows — **correct** |
+| `withFrame(msg) { block }` | Catches FailException from own scope, appends frame to `e.frames`, rethrows — **correct** |
 | `rail {}` boundary catch | `Failure(e.error, e.frames)` — transfers frames from FailException |
-| `FailMappingRail` top-level catch | `Res(Failure(e.error, e.frames))` — transfers frames |
+| `ExceptionMappingRail` top-level catch | `Res(Failure(e.error, e.frames))` — transfers frames |
 | `ErrorMappingRail` top-level catch | `Res(Failure(mapError(e.error), e.frames))` — transfers frames |
 | `MappingRail` top-level catch | `Res(Failure(e.error, e.frames))` — transfers frames |
 
@@ -385,23 +389,23 @@ All use direct `inlineValue is Failure` checks for performance (no virtual dispa
 
 These are critical rules. Violating them will silently break the library.
 
-1. **`FailException` extends `Throwable`, not `Exception`.** All exception-catching code uses `catch(Exception)`. If FailException extended Exception, failMapping/mapping would intercept rail control flow.
+1. **`FailException` extends `Throwable`, not `Exception`.** All exception-catching code uses `catch(Exception)`. If FailException extended Exception, catching/mapping would intercept rail control flow.
 
 2. **Scope identity check on catch.** Every `catch(FailException)` must check `e.scope !== scope` and rethrow if the exception belongs to a foreign scope. This prevents inner rail failures from being silently caught by outer rails.
 
-3. **CancellationException always rethrown.** Every exception-catching path (failMapping, mapping, attempt, ErrorMappingRail when mapError throws) must rethrow `kotlin.coroutines.cancellation.CancellationException`. Uses stdlib FQN, not kotlinx, to avoid runtime dependency.
+3. **CancellationException always rethrown.** Every exception-catching path (catching, mapping, attempt, ErrorMappingRail when mapError throws) must rethrow `kotlin.coroutines.cancellation.CancellationException`. Uses stdlib FQN, not kotlinx, to avoid runtime dependency.
 
 4. **Failure is internal.** User code cannot construct `Failure` instances. This makes `unsafeOk()` safe — user transform lambdas in `map`/`recover` cannot accidentally return a `Failure`. If `Failure` ever becomes accessible outside the module, all `unsafeOk` call sites must switch to `ok()`.
 
-5. **Frame ordering is append.** Index 0 = innermost. `.context()` and `withContext` both append to the end. `contextSummary()` reverses for display. Do not change the ordering convention.
+5. **Frame ordering is append.** Index 0 = innermost. `.context()` and `withFrame` both append to the end. `contextSummary()` reverses for display. Do not change the ordering convention.
 
 6. **`mapError` preserves frames.** When transforming a Fail error, the new `Failure` must carry the existing frames list. This is how context survives error type changes.
 
 7. **Zero runtime dependencies.** The core module must not depend on anything beyond the Kotlin stdlib. The KSP module depends on `symbol-processing-api` (compile-time only for consumers). Do not add runtime dependencies.
 
-8. **Companion factories only.** `ok()`/`failure()` live on `Res.Companion`. `attempt()`/`failMapping()`/`errorMapping()`/`mapping()`/`validation()` live on `Rail.Companion`. None are top-level functions.
+8. **Companion factories only.** `ok()`/`failure()` live on `Res.Companion`. `attempt()`/`catching()`/`mapping()`/`catchingMapping()`/`validation()` live on `Rail.Companion`. None are top-level functions.
 
-9. **Scope types are standalone.** `FailMappingRail`, `ErrorMappingRail`, `MappingRail`, `ValidationMapping` do not share an inheritance hierarchy. Methods are duplicated intentionally.
+9. **Scope types are standalone.** `ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`, `ValidationMapping` do not share an inheritance hierarchy. Methods are duplicated intentionally.
 
 10. **`flatMap` is an escape hatch.** The DSL (`rail {}` + `orFail()`) is the preferred composition style. `flatMap` exists for use outside `rail {}` blocks but is not the primary API.
 

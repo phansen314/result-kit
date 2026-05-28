@@ -48,7 +48,7 @@ internal class FailException(
 
 Key details:
 
-- **Extends `Throwable`, not `Exception`.** This is critical. Inside `rail {}`, users create `failMapping` scopes that catch `Exception`. If `FailException` extended `Exception`, those scopes would intercept the control-flow exception and break the railway. By extending `Throwable` directly, `catch(Exception)` blocks never see it.
+- **Extends `Throwable`, not `Exception`.** This is critical. Inside `rail {}`, users create `catching` scopes that catch `Exception`. If `FailException` extended `Exception`, those scopes would intercept the control-flow exception and break the railway. By extending `Throwable` directly, `catch(Exception)` blocks never see it.
 
 - **Stack trace is suppressed.** The `Throwable` constructor is called with `writableStackTrace = false`, so no stack trace is allocated. This exception is purely for control flow — it's caught at the `rail {}` boundary and never exposed to callers. Suppressing the stack trace makes it essentially free.
 
@@ -88,7 +88,7 @@ Result-Kit has four scope types, each standalone with no inheritance between the
 | Scope | Purpose | Exception catching | Error mapping |
 |---|---|---|---|
 | `Rail<E>` | Base DSL scope | No | No |
-| `FailMappingRail<E>` | Exception translation | Yes | No |
+| `ExceptionMappingRail<E>` | Exception translation | Yes | No |
 | `ErrorMappingRail<D, E>` | Typed error translation | No | Yes |
 | `MappingRail<D, E>` | Both | Yes | Yes |
 | `ValidationMapping<F, E>` | Error accumulation + mapping | No | Yes |
@@ -110,23 +110,23 @@ This prevents implicit access to an outer `Rail` receiver from within a nested `
 
 ### Dual Behavior of Mapping Scopes
 
-Each mapping scope (`FailMappingRail`, `ErrorMappingRail`, `MappingRail`) has two invoke implementations:
+Each mapping scope (`ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`) has two invoke implementations:
 
 1. **Top-level extension function** — creates its own `Rail` scope, returns `Res<V, E>`
 2. **Member extension on `Rail<E>`** — short-circuits the outer rail, returns unwrapped `V`
 
 Kotlin's member extension resolution ensures the correct one is selected: inside a `rail {}` block (where `this` is `Rail<E>`), the member extension wins. Outside, only the top-level extension is in scope.
 
-This means the same `FailMappingRail` instance can be used as both a top-level entry point and a scoped exception catcher inside `rail {}`, with the compiler enforcing correct usage via return types.
+This means the same `ExceptionMappingRail` instance can be used as both a top-level entry point and a scoped exception catcher inside `rail {}`, with the compiler enforcing correct usage via return types.
 
 **`ErrorMappingRail` and `.orFail(mapping)`:** In addition to the invoke pattern, `ErrorMappingRail` can be passed directly to `.orFail(mapping)` inside `rail {}` blocks. This is the preferred pattern because it reads consistently with `orFail()` and `orFail { }`:
 
 ```kotlin
-val http = errorMapping<HttpError> { AppError.Network(it) }
+val http = mapping<HttpError> { AppError.Network(it) }
 val user = fetchUser(id).orFail(http)  // preferred over http(fetchUser(id))
 ```
 
-The member extension `invoke(res)` still works but `.orFail(mapping)` is the primary documented pattern for `ErrorMappingRail` inside `rail {}` blocks. `FailMappingRail` and `MappingRail` continue to use the invoke pattern because they accept blocks, not `Res` values.
+The member extension `invoke(res)` still works but `.orFail(mapping)` is the primary documented pattern for `ErrorMappingRail` inside `rail {}` blocks. `ExceptionMappingRail` and `MappingRail` continue to use the invoke pattern because they accept blocks, not `Res` values.
 
 ## Zero Dependencies
 
@@ -141,16 +141,16 @@ A result type is foundational infrastructure — it wraps return values througho
 
 The dual behavior (top-level vs inside rail) deserves a deeper explanation because it's the most surprising part of the API.
 
-Consider `FailMappingRail<E>`. It has two `invoke` operator functions:
+Consider `ExceptionMappingRail<E>`. It has two `invoke` operator functions:
 
 ```kotlin
-// Top-level extension (in FailMappingRail.kt)
-public inline operator fun <V, E> FailMappingRail<E>.invoke(
+// Top-level extension (in ExceptionMappingRail.kt)
+public inline operator fun <V, E> ExceptionMappingRail<E>.invoke(
     block: Rail<E>.() -> V
 ): Res<V, E>
 
 // Member extension (in Rail.kt, inside Rail<E>)
-public inline operator fun <V> FailMappingRail<E>.invoke(
+public inline operator fun <V> ExceptionMappingRail<E>.invoke(
     block: Rail<E>.() -> V
 ): V
 ```
@@ -159,10 +159,10 @@ When you write `io { someCode() }` inside a `rail {}` block, the compiler sees t
 
 When you write `io { someCode() }` at the top level (not inside `rail {}`), there is no `Rail<E>` receiver, so only the standalone extension is in scope. The return type is `Res<V, E>`.
 
-This means you can define a `FailMappingRail` once and use it in both contexts:
+This means you can define a `ExceptionMappingRail` once and use it in both contexts:
 
 ```kotlin
-val appRail = Rail.failMapping<AppError> { e -> AppError.Unexpected(e) }
+val appRail = Rail.catching<AppError> { e -> AppError.Unexpected(e) }
 
 // Top-level: returns Res
 fun loadConfig(): Res<Config, AppError> = appRail { parseConfig() }
@@ -200,4 +200,24 @@ Prepend would be more efficient (linked list, `O(1)` prepend vs `O(n)` list copy
 
 ### FailException carries frames
 
-`FailException` extends `Throwable` for control flow. When `.orFailContext { }` or `withContext` short-circuits, the frame is attached to the `FailException` before it's thrown. All `Failure`-constructing catch sites (in `RailBuilder`, `FailMappingRail`, `ErrorMappingRail`, `MappingRail`) transfer `e.frames` to the new `Failure`. This ensures frames survive the throw/catch journey intact, even across mapping and exception-catching scopes.
+`FailException` extends `Throwable` for control flow. When `.orFailContext { }` or `withFrame` short-circuits, the frame is attached to the `FailException` before it's thrown. All `Failure`-constructing catch sites (in `RailBuilder`, `ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`) transfer `e.frames` to the new `Failure`. This ensures frames survive the throw/catch journey intact, even across mapping and exception-catching scopes.
+
+### Frames across recovery
+
+`recover` and `orElse` follow consistent rules:
+
+- **`recover { ... }`** — infallible. The result is always Ok, and Ok carries no frames, so the original frames are discarded by definition. The recovery has succeeded and the trail is no longer relevant.
+- **`orElse { ... }` returning Ok** — same as `recover`: frames discarded, the result is Ok.
+- **`orElse { ... }` returning Fail** — frames are merged as `original.frames + rec.frames`. The original frames sit before the recovery's frames so the chain reads from the most-specific original context outward through whatever context the recovery added. This preserves the trail back to the original failure when fallible recovery itself fails.
+
+This is the only operation that combines two frame lists. Every other propagation path either preserves frames unchanged (`map`, `mapError`, `flatMap`, `orFail`) or appends a single new frame (`.context`, `withFrame`, `orFailContext`).
+
+## Binary Compatibility
+
+The project uses the [`binary-compatibility-validator`](https://github.com/Kotlin/binary-compatibility-validator) Gradle plugin to track the public ABI. The captured API dumps live in `result-kit/api/result-kit.api` and `result-kit-ksp/api/result-kit-ksp.api` and are checked on every build.
+
+Why this matters specifically for Result-Kit: almost every public API is `inline`. Inline functions are copied into the consumer's bytecode at compile time, so any change to a referenced `@PublishedApi internal` symbol (notably `Failure`, `FailException`, `Res.unsafeOk`) is an ABI break — old consumer jars compiled against an earlier shape will fail to link.
+
+**Policy:** changes to `*.api` files are reviewed alongside the code change. A diff that adds new entries is additive (safe). A diff that removes or changes signatures is a breaking change and must be paired with a major version bump or a documented migration path.
+
+Run `./gradlew apiDump` to update the dumps after intentional API changes; `./gradlew apiCheck` (part of `build`) verifies the dumps are in sync.

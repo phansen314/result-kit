@@ -119,11 +119,11 @@ fun validateRegistration(
 
 ## Handling Exceptions
 
-Many libraries — Java IO, JSON parsers, HTTP clients — communicate failure by throwing exceptions. Use `failMapping` to catch and translate them:
+Many libraries — Java IO, JSON parsers, HTTP clients — communicate failure by throwing exceptions. Use `catching` to catch and translate them:
 
 ```kotlin
 fun loadConfig(path: String): Res<Config, String> = rail {
-    val io = failMapping { e -> "IO error: ${e.message}" }
+    val io = catching { e -> "IO error: ${e.message}" }
 
     val raw = io { File(path).readText() }
     val parsed = io { Json.decodeFromString<Config>(raw) }
@@ -132,13 +132,13 @@ fun loadConfig(path: String): Res<Config, String> = rail {
 ```
 
 Here's what happens:
-1. `failMapping { ... }` creates a reusable exception catcher that maps any `Exception` to your error type
+1. `catching { ... }` creates a reusable exception catcher that maps any `Exception` to your error type
 2. `io { ... }` runs the block — if it throws, the exception is caught, mapped, and short-circuited
 3. If it succeeds, the value is returned directly (not wrapped in `Res`)
 
 The `io` scope is reusable — use it for every throwing call in the block. `CancellationException` is always rethrown to preserve coroutine structured concurrency.
 
-> **Heads up:** The same `FailMappingRail` instance behaves differently depending on context. Inside `rail {}`, invoking it returns the unwrapped value and short-circuits on error. At the top level, the same call returns `Res<V, E>` instead. The compiler enforces this — a return-type mismatch is a compile error. See [Top-Level Usage](../README.md#top-level-usage-outside-rail--blocks) for details.
+> **Heads up:** The same `ExceptionMappingRail` instance behaves differently depending on context. Inside `rail {}`, invoking it returns the unwrapped value and short-circuits on error. At the top level, the same call returns `Res<V, E>` instead. The compiler enforces this — a return-type mismatch is a compile error. See [Top-Level Usage](../README.md#top-level-usage-outside-rail--blocks) for details.
 
 For one-off exception catching without mapping, use `Rail.attempt`:
 
@@ -148,7 +148,7 @@ val config: Res<Config, Exception> = Rail.attempt { loadConfigFile(path) }
 
 ## Working Across Error Domains
 
-Real applications have functions from different domains with different error types. Use `errorMapping` to translate between them:
+Real applications have functions from different domains with different error types. Use `mapping` to translate between them:
 
 ```kotlin
 sealed class AppError {
@@ -157,8 +157,8 @@ sealed class AppError {
 }
 
 fun getDashboard(userId: Int): Res<Dashboard, AppError> = rail {
-    val http = errorMapping<HttpError> { AppError.Network(it) }
-    val db = errorMapping<DbError> { AppError.Database(it) }
+    val http = mapping<HttpError> { AppError.Network(it) }
+    val db = mapping<DbError> { AppError.Database(it) }
 
     val user = fetchUser(userId).orFail(http)        // Res<User, HttpError> → User
     val settings = loadSettings(user.id).orFail(db)  // Res<Settings, DbError> → Settings
@@ -166,11 +166,11 @@ fun getDashboard(userId: Int): Res<Dashboard, AppError> = rail {
 }
 ```
 
-`errorMapping` creates a reusable mapper. Pass it to `.orFail(mapping)` to unwrap Ok values or map and short-circuit Fail errors — it does **not** catch exceptions. If your callees can both throw and return `Res`, use `mapping` which handles both:
+`mapping` creates a reusable mapper. Pass it to `.orFail(mapping)` to unwrap Ok values or map and short-circuit Fail errors — it does **not** catch exceptions. If your callees can both throw and return `Res`, use `catchingMapping` which handles both:
 
 ```kotlin
 fun getDashboard(userId: Int): Res<Dashboard, AppError> = rail {
-    val http = mapping<HttpError>(
+    val http = catchingMapping<HttpError>(
         onError = { AppError.Network(it) },
         onException = { AppError.Unexpected(it) },
     )
@@ -184,9 +184,55 @@ fun getDashboard(userId: Int): Res<Dashboard, AppError> = rail {
 
 | Your callee... | Use |
 |---|---|
-| Throws exceptions (Java libs, IO, parsing) | `failMapping` |
-| Returns `Res<V, D>` with a different error type | `errorMapping` |
-| Does both (HTTP clients, DB drivers, gRPC) | `mapping` |
+| Throws exceptions (Java libs, IO, parsing) | `catching` |
+| Returns `Res<V, D>` with a different error type | `mapping` |
+| Does both (HTTP clients, DB drivers, gRPC) | `catchingMapping` |
+
+## Recovery
+
+Sometimes a Fail isn't terminal — you have a fallback value, a cache, a default. There are two recovery operations depending on whether the fallback can itself fail.
+
+**`recover` — infallible.** The transform always produces a value, so the result is always Ok. The error type collapses to `Nothing`:
+
+```kotlin
+val cached: Res<Config, ConfigError> = loadFromDisk()
+val safe: Res<Config, Nothing> = cached.recover { Config.defaults() }
+```
+
+A two-arg overload (from `tech.codingzen.resultkit.context`) exposes the frame chain to the transform before it's discarded, so you can log "we recovered from X with context Y" without splitting into a separate `.tap` + `.recover` chain:
+
+```kotlin
+val safe: Res<Config, Nothing> = loadFromDisk().recover { err, frames ->
+    logger.warn("falling back to defaults — was: ${frames.joinToString(" / ")}, err=$err")
+    Config.defaults()
+}
+```
+
+**`orElse` — fallible.** The transform returns another `Res`. If the recovery succeeds you get its Ok. If the recovery itself fails, the original frames are merged with the recovery's frames so you keep the trail back to the original failure:
+
+```kotlin
+val live = fetchLiveConfig()                     // Res<Config, NetworkError>
+val withFallback: Res<Config, ConfigError> =
+    live.orElse { loadFromDisk() }               // Res<Config, ConfigError>
+
+// On Fail → Fail, frames look like:
+// [originalNetworkFrames..., recoveryDiskFrames...]
+```
+
+Inside `rail {}`, you typically don't reach for `orElse` — you can branch with plain `if`/`when` on the `Res` and call `.orFail()` on whichever branch you choose. `orElse` is most useful as a building block on a chain of `Res` values outside `rail {}`.
+
+### Side effects on both branches
+
+`onOk` / `onFail` add a side effect to one branch. `tap` covers both at once and is convenient for logging or metrics where Ok and Fail need different reactions:
+
+```kotlin
+val result = processOrder(id).tap(
+    onOk = { logger.info("processed order ${it.id}") },
+    onFail = { logger.warn("order $id failed: $it") },
+)
+```
+
+Both lambdas default to no-op, so `tap(onOk = { ... })` and `tap(onFail = { ... })` are valid for one-sided cases too.
 
 ## Combining Results
 
@@ -217,6 +263,33 @@ val result: Res<User, List<String>> = zipOrAccumulate(
 ```
 
 Both support arities 2 through 4.
+
+For more than four checks, or when the validators don't fit a fixed-arity zip, use `validation {}` directly. It exposes a `Validator<E>` that accumulates errors across the block:
+
+```kotlin
+val result: Res<Unit, List<String>> = validation {
+    ensure(name.isNotBlank()) { "Name required" }
+    ensure(email.contains('@')) { "Invalid email" }
+    ensure(age in 13..150) { "Invalid age" }
+    check(verifyAddress(address))    // drains a Res<*, String> into the accumulator
+}
+```
+
+Inside `rail {}` you bridge an accumulating validator into the rail with a `ValidationMapping`:
+
+```kotlin
+fun register(req: Request): Res<User, AppError> = rail {
+    val v = validation<String> { errs -> AppError.Validation(errs) }
+    v {
+        ensure(req.name.isNotBlank()) { "Name required" }
+        ensure(req.email.contains('@')) { "Invalid email" }
+    }
+    // … if v collected any errors, the rail short-circuited above with AppError.Validation
+    saveUser(req).orFail()
+}
+```
+
+For imperative style — adding errors from arbitrary control flow before producing a single `Res` — use the `Validator.validator<E>()` factory.
 
 ## Working with Collections
 
@@ -257,7 +330,7 @@ val saved: Res<Unit, String> = users.tryForEach { user -> saveUser(user) }
 
 ```kotlin
 suspend fun fetchDashboard(userId: Int): Res<Dashboard, String> = rail {
-    val http = failMapping { e -> "HTTP error: ${e.message}" }
+    val http = catching { e -> "HTTP error: ${e.message}" }
 
     val user = http { userService.getUser(userId) }        // suspend
     val profile = http { profileService.getProfile(user.id) } // suspend
@@ -265,17 +338,17 @@ suspend fun fetchDashboard(userId: Int): Res<Dashboard, String> = rail {
 }
 ```
 
-All exception-catching scopes (`failMapping`, `mapping`, `Rail.attempt`) rethrow `CancellationException`, so structured concurrency is preserved.
+All exception-catching scopes (`catching`, `mapping`, `Rail.attempt`) rethrow `CancellationException`, so structured concurrency is preserved.
 
 ## Database Transactions
 
 Many database frameworks use exceptions to trigger rollback — Spring `@Transactional`, Exposed `transaction {}`, JOOQ, raw JDBC. The `rail {}` DSL uses an internal `FailException` for control flow. These mechanisms can interfere if the boundaries aren't set up correctly.
 
-**The rule: keep `rail {}` outside the transaction boundary.** Use `failMapping` to wrap the transaction call. Exceptions roll back the transaction first, then `failMapping` catches and translates the re-thrown exception.
+**The rule: keep `rail {}` outside the transaction boundary.** Use `catching` to wrap the transaction call. Exceptions roll back the transaction first, then `catching` catches and translates the re-thrown exception.
 
 ```kotlin
 fun transferFunds(from: Int, to: Int, amount: BigDecimal): Res<Transfer, AppError> = rail {
-    val db = failMapping { e -> AppError.Database("Transfer failed: ${e.message}") }
+    val db = catching { e -> AppError.Database("Transfer failed: ${e.message}") }
 
     db {
         transaction {
@@ -292,7 +365,7 @@ fun transferFunds(from: Int, to: Int, amount: BigDecimal): Res<Transfer, AppErro
 The flow on failure:
 1. `accountRepo.debit()` throws →
 2. `transaction {}` catches, rolls back, re-throws →
-3. `failMapping` catches the re-thrown exception, maps to `AppError` →
+3. `catching` catches the re-thrown exception, maps to `AppError` →
 4. `rail {}` returns `Res.Fail`
 
 **Don't put `rail {}` inside the transaction.** `FailException` extends `Throwable` (not `Exception`), and some transaction frameworks catch `Throwable` for rollback. This can trigger unintended rollbacks or swallow your typed errors.
@@ -308,8 +381,8 @@ fun createOrder(request: OrderRequest): Res<Order, AppError> = rail {
         .orFail { AppError.Validation(it) }
     ensure(items.isNotEmpty()) { AppError.Validation("Order must have at least one item") }
 
-    // Database write — failMapping wraps the transaction
-    val db = failMapping { e -> AppError.Database(e.message ?: "DB error") }
+    // Database write — catching wraps the transaction
+    val db = catching { e -> AppError.Database(e.message ?: "DB error") }
     db {
         transaction {
             val order = orderRepo.create(request.customerId)
@@ -327,7 +400,7 @@ If your repository functions return `Res`, evaluate the result *after* the trans
 
 ```kotlin
 fun deactivateUser(userId: Int): Res<Unit, AppError> = rail {
-    val db = failMapping { e -> AppError.Database(e.message ?: "DB error") }
+    val db = catching { e -> AppError.Database(e.message ?: "DB error") }
 
     val result: Res<Unit, AppError> = db {
         transaction {
@@ -389,11 +462,11 @@ suspend fun registerUser(
         .orFail { errors -> RegistrationError.Validation(errors) }
 
     // Save to database (may throw)
-    val db = failMapping { e -> RegistrationError.Database("DB error: ${e.message}") }
+    val db = catching { e -> RegistrationError.Database("DB error: ${e.message}") }
     val user = db { userRepository.create(validName, validEmail, validPassword) }
 
     // Send welcome email (may throw)
-    val mail = failMapping { e -> RegistrationError.Email("Email error: ${e.message}") }
+    val mail = catching { e -> RegistrationError.Email("Email error: ${e.message}") }
     mail { emailService.sendWelcome(user.email) }
 
     user
@@ -403,7 +476,7 @@ suspend fun registerUser(
 This example demonstrates:
 - `zipOrAccumulate` to collect all validation errors at once
 - `orFail { }` to translate accumulated `List<String>` errors into the domain error type
-- Separate `failMapping` scopes for database and email, each with their own error mapping
+- Separate `catching` scopes for database and email, each with their own error mapping
 - The entire flow reads top-to-bottom as straight-line code despite having multiple failure modes
 
 ## Error Context Chains
@@ -433,11 +506,11 @@ The frame list is ordered **innermost-first**: index 0 is the frame closest to t
 
 ### Inside rail {}
 
-`withContext` wraps a block and attaches a frame to any failure that short-circuits out of it:
+`withFrame` wraps a block and attaches a frame to any failure that short-circuits out of it:
 
 ```kotlin
 fun processOrder(id: Int): Res<Order, AppError> = rail {
-    withContext("processing order $id") {
+    withFrame("processing order $id") {
         val order = fetchOrder(id).orFail()
         val validated = validateOrder(order).orFail()
         saveOrder(validated).orFail()
@@ -537,13 +610,13 @@ val auth: AuthService = AuthServiceTraced(delegate = realAuthService)
 
 Every call to `auth.login(...)` now automatically attaches a context frame with the message `"authenticating user $username"` (password excluded) and a `SourceLocation` pointing to the interface declaration. Non-`Res` methods are delegated as-is.
 
-See the [API Reference](../README.md#tracecontent-annotations-result-kit-ksp) for annotation options.
+See the [API Reference](../README.md#tracecontext-annotations-result-kit-ksp) for annotation options.
 
 ## Common Pitfalls
 
 ### Don't `catch(Throwable)` or `catch(Exception)` inside `rail {}`
 
-`rail {}` uses an internal `FailException` (extends `Throwable`, not `Exception`) for short-circuit control flow. A bare `catch(Throwable)` inside the rail will swallow it and break the DSL. A `catch(Exception)` is safer — `FailException` slips past it — but it will still silently absorb anything `failMapping` should be translating.
+`rail {}` uses an internal `FailException` (extends `Throwable`, not `Exception`) for short-circuit control flow. A bare `catch(Throwable)` inside the rail will swallow it and break the DSL. A `catch(Exception)` is safer — `FailException` slips past it — but it will still silently absorb anything `catching` should be translating.
 
 ```kotlin
 // WRONG — catches FailException, breaks short-circuit
@@ -555,7 +628,7 @@ rail {
     }
 }
 
-// WRONG — silently eats exceptions that failMapping should translate
+// WRONG — silently eats exceptions that catching should translate
 rail {
     try {
         File(path).readText()
@@ -564,16 +637,47 @@ rail {
     }
 }
 
-// RIGHT — failMapping translates exceptions to your error type
+// RIGHT — catching translates exceptions to your error type
 rail {
-    val io = failMapping { e -> AppError.IO(e.message) }
+    val io = catching { e -> AppError.IO(e.message) }
     val text = io { File(path).readText() }
 }
 ```
 
 ### Don't put `rail {}` inside a transaction
 
-Some transaction frameworks catch `Throwable` to trigger rollback. Because `FailException` extends `Throwable`, that can cause unintended rollbacks or swallow your typed errors. Keep `rail {}` outside; wrap the transaction with `failMapping` instead. See [Database Transactions](#database-transactions).
+Some transaction frameworks catch `Throwable` to trigger rollback. Because `FailException` extends `Throwable`, that can cause unintended rollbacks or swallow your typed errors. Keep `rail {}` outside; wrap the transaction with `catching` instead. See [Database Transactions](#database-transactions).
+
+### Global `Throwable` interceptors — Spring, gRPC, Sentry, MDC
+
+`FailException` is `Throwable`-typed by design (so user `catch(Exception)` doesn't intercept it). But anything *above* your `rail {}` that catches `Throwable` will see it: Spring `@ExceptionHandler(Throwable::class)`, gRPC `ServerInterceptor`, Sentry's exception capture, MDC clearing filters, request-scoped instrumentation.
+
+The symptom is silent `Ok` from a failed rail, or noisy "unhandled exception" logs for normal control flow.
+
+Mitigations:
+- Keep `rail {}` **inside** the request handler — let global interceptors run on framework errors only.
+- If an interceptor must run across the `rail {}` boundary, special-case `FailException` and rethrow it.
+- Enable a real stack trace with `-Dresultkit.debug=true` when investigating a stray `FailException`. By default `fillInStackTrace` is a no-op for zero-cost control flow; the system property opts in to a JVM stack so you can find the call site. Read once at class init — set the property on the JVM command line, not at runtime.
+
+### Don't write a bare `Res.failure(e)` inside `rail {}` — use `fail(e)` instead
+
+`Res.failure(e)` builds a Fail value; if you don't return or assign it, it's silently dropped. `Rail.fail(e)` short-circuits the rail directly.
+
+```kotlin
+// WRONG — Res.failure built, discarded, rail continues
+rail {
+    if (id < 0) Res.failure("negative id")   // does nothing
+    process(id)
+}
+
+// RIGHT — short-circuits the rail
+rail {
+    if (id < 0) fail("negative id")
+    process(id)
+}
+```
+
+`Res.ok` / `Res.failure` are annotated with `@CheckReturnValue` so IntelliJ flags discarded results.
 
 ### `mapError` preserves frames
 

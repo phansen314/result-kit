@@ -14,7 +14,7 @@ class ErrorMappingRailTest {
     @Test
     fun `invoke unwraps Ok value`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             val x: Int = http(Res.ok(42))
             x + 1
         }
@@ -24,7 +24,7 @@ class ErrorMappingRailTest {
     @Test
     fun `invoke maps error on Fail and short-circuits`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             http(Res.failure(404))
             @Suppress("UNREACHABLE_CODE")
             999
@@ -34,9 +34,9 @@ class ErrorMappingRailTest {
     }
 
     @Test
-    fun `errorMapping is reusable across multiple calls`() {
+    fun `mapping is reusable across multiple calls`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             val a = http(Res.ok(10))
             val b = http(Res.ok(20))
             a + b
@@ -48,7 +48,7 @@ class ErrorMappingRailTest {
     fun `short-circuits on first error`() {
         var secondCalled = false
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             http(Res.failure(500))
             @Suppress("UNREACHABLE_CODE")
             secondCalled = true
@@ -63,8 +63,8 @@ class ErrorMappingRailTest {
     @Test
     fun `works with different error types in same rail block`() {
         val result = rail<String, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
-            val db = errorMapping<String> { msg -> "DB: $msg" }
+            val http = mapping<Int> { code -> "HTTP $code" }
+            val db = mapping<String> { msg -> "DB: $msg" }
             val userId = http(Res.ok(42))
             val name = db(Res.ok("Alice"))
             "$name (id=$userId)"
@@ -75,8 +75,8 @@ class ErrorMappingRailTest {
     @Test
     fun `different error mappers map their respective errors`() {
         val result = rail<String, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
-            val db = errorMapping<String> { msg -> "DB: $msg" }
+            val http = mapping<Int> { code -> "HTTP $code" }
+            val db = mapping<String> { msg -> "DB: $msg" }
             http(Res.ok(42))
             db(Res.failure("connection lost"))
             @Suppress("UNREACHABLE_CODE")
@@ -87,10 +87,10 @@ class ErrorMappingRailTest {
     }
 
     @Test
-    fun `works alongside failMapping in same rail block`() {
+    fun `works alongside catching in same rail block`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
-            val io = failMapping { e -> "IO: ${e.message}" }
+            val http = mapping<Int> { code -> "HTTP $code" }
+            val io = catching { e -> "IO: ${e.message}" }
             val x = http(Res.ok(10))
             val y: Int = io { x + 5 }
             y
@@ -99,9 +99,9 @@ class ErrorMappingRailTest {
     }
 
     @Test
-    fun `failMapping catches exception while errorMapping maps typed error`() {
+    fun `catching catches exception while mapping maps typed error`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "IO: ${e.message}" }
+            val io = catching { e -> "IO: ${e.message}" }
             io { throw RuntimeException("disk full") }
             @Suppress("UNREACHABLE_CODE")
             0
@@ -113,7 +113,7 @@ class ErrorMappingRailTest {
     @Test
     fun `works alongside orFail in same rail block`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             val a = http(Res.ok(10))
             val b: Int = Res.ok(20).orFail()
             a + b
@@ -122,9 +122,9 @@ class ErrorMappingRailTest {
     }
 
     @Test
-    fun `orFail with inline mapping alongside errorMapping`() {
+    fun `orFail with inline mapping alongside mapping`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             http(Res.ok(10))
             Res.failure(99).orFail { n -> "Direct: $n" }
             @Suppress("UNREACHABLE_CODE")
@@ -138,7 +138,7 @@ class ErrorMappingRailTest {
     fun `does NOT catch exceptions — exception propagates through unmapped`() {
         assertFailsWith<RuntimeException> {
             rail<Int, String> {
-                val http = errorMapping<Int> { code -> "HTTP $code" }
+                val http = mapping<Int> { code -> "HTTP $code" }
                 http(Res.ok(Unit))
                 throw RuntimeException("boom")
             }
@@ -153,7 +153,7 @@ class ErrorMappingRailTest {
         }
 
         val result = rail<String, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             http(fetchUser(1))
         }
         assertEquals("User-1", result.getOrNull())
@@ -164,7 +164,7 @@ class ErrorMappingRailTest {
     @Test
     fun `orFail with ErrorMappingRail unwraps Ok value`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             Res.ok(42).orFail(http)
         }
         assertEquals(42, result.getOrNull())
@@ -173,7 +173,7 @@ class ErrorMappingRailTest {
     @Test
     fun `orFail with ErrorMappingRail maps error and short-circuits`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             Res.failure(404).orFail(http)
             @Suppress("UNREACHABLE_CODE")
             999
@@ -185,7 +185,7 @@ class ErrorMappingRailTest {
     @Test
     fun `orFail with ErrorMappingRail is reusable across multiple calls`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             val a = Res.ok(10).orFail(http)
             val b = Res.ok(20).orFail(http)
             a + b
@@ -196,7 +196,7 @@ class ErrorMappingRailTest {
     @Test
     fun `orFail with ErrorMappingRail works alongside orFail with inline lambda`() {
         val result = rail<Int, String> {
-            val http = errorMapping<Int> { code -> "HTTP $code" }
+            val http = mapping<Int> { code -> "HTTP $code" }
             val a = Res.ok(10).orFail(http)
             val b: Int = Res.ok(20).orFail { n -> "Direct: $n" }
             a + b
@@ -208,7 +208,7 @@ class ErrorMappingRailTest {
 
     @Test
     fun `top-level invoke returns Ok on success`() {
-        val http = Rail.errorMapping<Int, String> { code -> "HTTP $code" }
+        val http = Rail.mapping<Int, String> { code -> "HTTP $code" }
         val result = http {
             val a = Res.ok(10).orFail()
             val b = Res.ok(20).orFail()
@@ -219,7 +219,7 @@ class ErrorMappingRailTest {
 
     @Test
     fun `top-level invoke maps error on fail`() {
-        val http = Rail.errorMapping<Int, String> { code -> "HTTP $code" }
+        val http = Rail.mapping<Int, String> { code -> "HTTP $code" }
         val result = http {
             Res.ok(10).orFail()
             Res.failure(404).orFail()
@@ -232,7 +232,7 @@ class ErrorMappingRailTest {
 
     @Test
     fun `top-level invoke does not catch exceptions`() {
-        val http = Rail.errorMapping<Int, String> { code -> "HTTP $code" }
+        val http = Rail.mapping<Int, String> { code -> "HTTP $code" }
         assertFailsWith<RuntimeException>("boom") {
             http {
                 throw RuntimeException("boom")
@@ -242,7 +242,7 @@ class ErrorMappingRailTest {
 
     @Test
     fun `top-level invoke with suspend`() = runTest {
-        val http = Rail.errorMapping<Int, String> { code -> "HTTP $code" }
+        val http = Rail.mapping<Int, String> { code -> "HTTP $code" }
         val result = http {
             delay(1)
             Res.ok(42).orFail()
@@ -252,8 +252,8 @@ class ErrorMappingRailTest {
 
     @Test
     fun `top-level invoke scope isolation — nested FailException propagates`() {
-        val outer = Rail.errorMapping<String, String> { "outer: $it" }
-        val inner = Rail.errorMapping<Int, String> { "inner: $it" }
+        val outer = Rail.mapping<String, String> { "outer: $it" }
+        val inner = Rail.mapping<Int, String> { "inner: $it" }
 
         val result = outer {
             val innerResult: Res<Int, String> = inner {

@@ -108,43 +108,43 @@ class ValidatorTest {
         assertEquals(listOf("HTTP 404"), v.errors())
     }
 
-    // -- checkOrNull --
+    // -- valueOrNull --
 
     @Test
-    fun `checkOrNull on Ok returns value and adds nothing`() {
+    fun `valueOrNull on Ok returns value and adds nothing`() {
         val v = Validator.validator<String>()
-        val value = with(v) { Res.ok(42).checkOrNull() }
+        val value = with(v) { Res.ok(42).valueOrNull() }
         assertEquals(42, value)
         assertFalse(v.hasErrors)
     }
 
     @Test
-    fun `checkOrNull on Fail returns null and adds error`() {
+    fun `valueOrNull on Fail returns null and adds error`() {
         val v = Validator.validator<String>()
         val res: Res<Int, String> = Res.failure("bad")
-        val value = with(v) { res.checkOrNull() }
+        val value = with(v) { res.valueOrNull() }
         assertNull(value)
         assertEquals(listOf("bad"), v.errors())
     }
 
     @Test
-    fun `checkOrNull with mapError on Ok returns value and adds nothing`() {
+    fun `valueOrNull with mapError on Ok returns value and adds nothing`() {
         val v = Validator.validator<String>()
-        val value = with(v) { Res.ok(42).checkOrNull { it: Int -> "mapped: $it" } }
+        val value = with(v) { Res.ok(42).valueOrNull { it: Int -> "mapped: $it" } }
         assertEquals(42, value)
         assertFalse(v.hasErrors)
     }
 
     @Test
-    fun `checkOrNull with mapError on Fail returns null and adds mapped error`() {
+    fun `valueOrNull with mapError on Fail returns null and adds mapped error`() {
         val v = Validator.validator<String>()
         val res: Res<Int, Int> = Res.failure(404)
-        val value = with(v) { res.checkOrNull { code -> "HTTP $code" } }
+        val value = with(v) { res.valueOrNull { code -> "HTTP $code" } }
         assertNull(value)
         assertEquals(listOf("HTTP 404"), v.errors())
     }
 
-    // -- check/checkOrNull member overloads (imperative, no with()) --
+    // -- check/valueOrNull member overloads (imperative, no with()) --
 
     @Test
     fun `check member on Ok adds nothing`() {
@@ -168,26 +168,80 @@ class ValidatorTest {
     }
 
     @Test
-    fun `checkOrNull member on Ok returns value`() {
+    fun `valueOrNull member on Ok returns value`() {
         val v = Validator.validator<String>()
-        val value = v.checkOrNull(Res.ok(42))
+        val value = v.valueOrNull(Res.ok(42))
         assertEquals(42, value)
         assertFalse(v.hasErrors)
     }
 
     @Test
-    fun `checkOrNull member on Fail returns null and adds error`() {
+    fun `valueOrNull member on Fail returns null and adds error`() {
         val v = Validator.validator<String>()
-        val value = v.checkOrNull(Res.failure("bad"))
+        val value = v.valueOrNull(Res.failure("bad"))
         assertNull(value)
         assertEquals(listOf("bad"), v.errors())
     }
 
     @Test
-    fun `checkOrNull member with mapError on Fail returns null and adds mapped error`() {
+    fun `valueOrNull member with mapError on Fail returns null and adds mapped error`() {
         val v = Validator.validator<String>()
-        val value = v.checkOrNull(Res.failure(404)) { code -> "HTTP $code" }
+        val value = v.valueOrNull(Res.failure(404)) { code -> "HTTP $code" }
         assertNull(value)
+        assertEquals(listOf("HTTP 404"), v.errors())
+    }
+
+    // -- checkOr (extension form) --
+
+    @Test
+    fun `checkOr extension on Ok returns value`() {
+        val v = Validator.validator<String>()
+        val value = with(v) { Res.ok(42).checkOr(0) }
+        assertEquals(42, value)
+        assertFalse(v.hasErrors)
+    }
+
+    @Test
+    fun `checkOr extension on Fail returns default and adds error`() {
+        val v = Validator.validator<String>()
+        val res: Res<Int, String> = Res.failure("bad")
+        val value = with(v) { res.checkOr(99) }
+        assertEquals(99, value)
+        assertEquals(listOf("bad"), v.errors())
+    }
+
+    @Test
+    fun `checkOr extension with mapError on Fail returns default and adds mapped error`() {
+        val v = Validator.validator<String>()
+        val res: Res<Int, Int> = Res.failure(404)
+        val value = with(v) { res.checkOr(0) { code -> "HTTP $code" } }
+        assertEquals(0, value)
+        assertEquals(listOf("HTTP 404"), v.errors())
+    }
+
+    // -- checkOr (member form) --
+
+    @Test
+    fun `checkOr member on Ok returns value`() {
+        val v = Validator.validator<String>()
+        val value = v.checkOr(0, Res.ok(42))
+        assertEquals(42, value)
+        assertFalse(v.hasErrors)
+    }
+
+    @Test
+    fun `checkOr member on Fail returns default and adds error`() {
+        val v = Validator.validator<String>()
+        val value = v.checkOr(99, Res.failure("bad"))
+        assertEquals(99, value)
+        assertEquals(listOf("bad"), v.errors())
+    }
+
+    @Test
+    fun `checkOr member with mapError on Fail returns default and adds mapped error`() {
+        val v = Validator.validator<String>()
+        val value = v.checkOr(0, Res.failure(404)) { code -> "HTTP $code" }
+        assertEquals(0, value)
         assertEquals(listOf("HTTP 404"), v.errors())
     }
 
@@ -259,16 +313,16 @@ class ValidatorTest {
     }
 
     @Test
-    fun `validation block supports check and checkOrNull`() {
+    fun `validation block supports check and valueOrNull`() {
         val result = validation<String> {
             Res.failure("from check").check()
-            val value = Res.ok(42).checkOrNull()
+            val value = Res.ok(42).valueOrNull()
             assertEquals(42, value)
-            val failRes: Res<Int, String> = Res.failure("from checkOrNull")
-            failRes.checkOrNull()
+            val failRes: Res<Int, String> = Res.failure("from valueOrNull")
+            failRes.valueOrNull()
         }
         assertTrue(result.isFail)
-        assertEquals(listOf("from check", "from checkOrNull"), result.errorOrThrow())
+        assertEquals(listOf("from check", "from valueOrNull"), result.errorOrThrow())
     }
 
     // -- addAll inside validation {} block --

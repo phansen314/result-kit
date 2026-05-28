@@ -5,27 +5,30 @@ package tech.codingzen.resultkit
 /**
  * Reusable scope for catching exceptions and mapping them to a typed error.
  *
- * **Top-level usage** — create via [Rail.failMapping] or constructor, invoke to get [Res]:
+ * **Top-level usage** — create via [Rail.Companion.catching] or constructor, invoke to get [Res]:
  * ```
- * val appRail = Rail.failMapping { e -> AppError.Unexpected(e) }
+ * val appRail = Rail.catching { e -> AppError.Unexpected(e) }
  * val r: Res<User, AppError> = appRail { fetchUser(id) }
  * ```
  *
- * **Inside [rail] blocks** — create via [Rail.failMapping], invoke to get the unwrapped value
+ * **Inside [rail] blocks** — create via [Rail.catching], invoke to get the unwrapped value
  * (short-circuits the outer scope on exception):
  * ```
  * val result = rail<Int, String> {
- *     val http = failMapping { e -> "HTTP: ${e.message}" }
+ *     val http = catching { e -> "HTTP: ${e.message}" }
  *     val user = http { fetchUser(id) }   // returns User directly
  * }
  * ```
  *
- * **Note:** The same [FailMappingRail] instance behaves differently depending on context.
+ * **Note:** The same [ExceptionMappingRail] instance behaves differently depending on context.
  * Top-level invoke returns `Res<V, E>`; inside `rail {}` the member extension on [Rail] wins
  * and returns `V` directly (short-circuiting on error). The compiler enforces correct usage —
  * a return-type mismatch is a compile error.
+ *
+ * For typed-error-only mapping, use [ErrorMappingRail].
+ * For combined exception + typed-error handling, use [MappingRail].
  */
-public class FailMappingRail<E>(
+public class ExceptionMappingRail<E>(
     @PublishedApi internal val mapError: (Exception) -> E
 )
 
@@ -35,7 +38,7 @@ public class FailMappingRail<E>(
  * Inside a [rail] block, the member extension [Rail.invoke] takes precedence and
  * returns the unwrapped value directly instead.
  */
-public inline operator fun <V, E> FailMappingRail<E>.invoke(
+public inline operator fun <V, E> ExceptionMappingRail<E>.invoke(
     block: Rail<E>.() -> V
 ): Res<V, E> {
     val scope = Rail<E>()

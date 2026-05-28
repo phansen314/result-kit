@@ -5,7 +5,7 @@ package tech.codingzen.resultkit
 /**
  * Reusable mapper for flushing accumulated validation errors into a [rail] scope.
  *
- * Follows the same dual-invoke pattern as [FailMappingRail], [ErrorMappingRail],
+ * Follows the same dual-invoke pattern as [ExceptionMappingRail], [ErrorMappingRail],
  * and [MappingRail]:
  *
  * **Top-level usage** — invoke returns [Res]:

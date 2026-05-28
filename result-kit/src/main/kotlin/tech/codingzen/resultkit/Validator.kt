@@ -28,7 +28,7 @@ package tech.codingzen.resultkit
  * into the rail's error type. See [Rail.validation] and [Rail.Companion.validation].
  *
  * **Not thread-safe.** Errors are collected into a plain mutable list.
- * Do not call [fail], [ensure], [check], or [checkOrNull] concurrently from
+ * Do not call [fail], [ensure], [check], [checkOr], or [valueOrNull] concurrently from
  * multiple coroutines. For parallel validation, run independent checks with
  * [zipOrAccumulate] instead.
  */
@@ -71,11 +71,12 @@ public class Validator<E> @PublishedApi internal constructor() {
      * If this is Fail, adds its error and returns `null`. If Ok, returns the value.
      *
      * **Caution:** Validation does not short-circuit, so subsequent code that depends
-     * on the returned value will see `null` on the Fail path. Guard dependent
-     * validations with null checks to avoid [NullPointerException].
+     * on the returned value will see `null` on the Fail path. The `OrNull` suffix is a
+     * deliberate signal — prefer [checkOr] when you have a sane default, or guard the
+     * result with a null check before dependent validations to avoid [NullPointerException].
      */
     @Suppress("NOTHING_TO_INLINE")
-    public inline fun <V> Res<V, E>.checkOrNull(): V? {
+    public inline fun <V> Res<V, E>.valueOrNull(): V? {
         return if (inlineValue is Failure) {
             errors.add(inlineValue.error as E)
             null
@@ -88,13 +89,51 @@ public class Validator<E> @PublishedApi internal constructor() {
      * If this is Fail, maps the error via [mapError], adds it, and returns `null`. If Ok, returns the value.
      *
      * **Caution:** Validation does not short-circuit, so subsequent code that depends
-     * on the returned value will see `null` on the Fail path. Guard dependent
-     * validations with null checks to avoid [NullPointerException].
+     * on the returned value will see `null` on the Fail path. The `OrNull` suffix is a
+     * deliberate signal — prefer [checkOr] when you have a sane default, or guard the
+     * result with a null check before dependent validations to avoid [NullPointerException].
      */
-    public inline fun <V, F> Res<V, F>.checkOrNull(mapError: (F) -> E): V? {
+    public inline fun <V, F> Res<V, F>.valueOrNull(mapError: (F) -> E): V? {
         return if (inlineValue is Failure) {
             errors.add(mapError((inlineValue as Failure).error as F))
             null
+        } else {
+            inlineValue as V
+        }
+    }
+
+    /**
+     * If this is Fail, adds its error and returns [default]. If Ok, returns the value.
+     *
+     * Non-null variant of [valueOrNull] — use when you have a sane fallback so dependent
+     * validations don't have to guard against null:
+     *
+     * ```
+     * validation<String> {
+     *     val name = parseName(input).checkOr("anonymous")     // V, never null
+     *     ensure(name.length <= 50) { "name too long" }        // safe to dereference
+     * }
+     * ```
+     */
+    @Suppress("NOTHING_TO_INLINE")
+    public inline fun <V> Res<V, E>.checkOr(default: V): V {
+        return if (inlineValue is Failure) {
+            errors.add(inlineValue.error as E)
+            default
+        } else {
+            inlineValue as V
+        }
+    }
+
+    /**
+     * If this is Fail, maps the error via [mapError], adds it, and returns [default]. If Ok, returns the value.
+     *
+     * Non-null variant of [valueOrNull] — see [checkOr] for usage.
+     */
+    public inline fun <V, F> Res<V, F>.checkOr(default: V, mapError: (F) -> E): V {
+        return if (inlineValue is Failure) {
+            errors.add(mapError((inlineValue as Failure).error as F))
+            default
         } else {
             inlineValue as V
         }
@@ -117,12 +156,12 @@ public class Validator<E> @PublishedApi internal constructor() {
      * If [res] is Fail, adds its error and returns `null`. If Ok, returns the value.
      *
      * **Caution:** Validation does not short-circuit, so subsequent code that depends
-     * on the returned value will see `null` on the Fail path. Guard dependent
-     * validations with null checks to avoid [NullPointerException].
+     * on the returned value will see `null` on the Fail path. Prefer [checkOr] when you
+     * have a sane default; otherwise guard the result with a null check to avoid [NullPointerException].
      */
     @Suppress("NOTHING_TO_INLINE")
-    @JvmName("checkOrNullRes")
-    public inline fun <V> checkOrNull(res: Res<V, E>): V? {
+    @JvmName("valueOrNullRes")
+    public inline fun <V> valueOrNull(res: Res<V, E>): V? {
         return if (res.inlineValue is Failure) {
             errors.add(res.inlineValue.error as E)
             null
@@ -134,15 +173,44 @@ public class Validator<E> @PublishedApi internal constructor() {
     /**
      * If [res] is Fail, maps the error via [mapError], adds it, and returns `null`. If Ok, returns the value.
      *
-     * **Caution:** Validation does not short-circuit, so subsequent code that depends
-     * on the returned value will see `null` on the Fail path. Guard dependent
-     * validations with null checks to avoid [NullPointerException].
+     * **Caution:** See [valueOrNull] for the non-null guidance.
      */
-    @JvmName("checkOrNullResMapped")
-    public inline fun <V, F> checkOrNull(res: Res<V, F>, mapError: (F) -> E): V? {
+    @JvmName("valueOrNullResMapped")
+    public inline fun <V, F> valueOrNull(res: Res<V, F>, mapError: (F) -> E): V? {
         return if (res.inlineValue is Failure) {
             errors.add(mapError((res.inlineValue as Failure).error as F))
             null
+        } else {
+            res.inlineValue as V
+        }
+    }
+
+    /**
+     * If [res] is Fail, adds its error and returns [default]. If Ok, returns the value.
+     *
+     * Non-null variant of [valueOrNull].
+     */
+    @Suppress("NOTHING_TO_INLINE")
+    @JvmName("checkOrRes")
+    public inline fun <V> checkOr(default: V, res: Res<V, E>): V {
+        return if (res.inlineValue is Failure) {
+            errors.add(res.inlineValue.error as E)
+            default
+        } else {
+            res.inlineValue as V
+        }
+    }
+
+    /**
+     * If [res] is Fail, maps the error via [mapError], adds it, and returns [default]. If Ok, returns the value.
+     *
+     * Non-null variant of [valueOrNull].
+     */
+    @JvmName("checkOrResMapped")
+    public inline fun <V, F> checkOr(default: V, res: Res<V, F>, mapError: (F) -> E): V {
+        return if (res.inlineValue is Failure) {
+            errors.add(mapError((res.inlineValue as Failure).error as F))
+            default
         } else {
             res.inlineValue as V
         }

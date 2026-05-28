@@ -9,13 +9,13 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-class FailMappingRailTest {
+class ExceptionMappingRailTest {
 
-    // -- Rail.failMapping companion factory --
+    // -- Rail.catching companion factory --
 
     @Test
-    fun `Rail companion failMapping creates equivalent FailMappingRail`() {
-        val appRes = Rail.failMapping { e -> "Error: ${e.message}" }
+    fun `Rail companion catching creates equivalent ExceptionMappingRail`() {
+        val appRes = Rail.catching { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRes { throw RuntimeException("boom") }
         assertTrue(result.isFail)
         assertEquals("Error: boom", result.errorOrThrow())
@@ -25,7 +25,7 @@ class FailMappingRailTest {
 
     @Test
     fun `invoke catches exception and maps to error type`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         val result: Res<Int, String> = appRes { throw RuntimeException("boom") }
         assertTrue(result.isFail)
         assertEquals("Error: boom", result.errorOrThrow())
@@ -33,7 +33,7 @@ class FailMappingRailTest {
 
     @Test
     fun `invoke returns Ok on success`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         val result = appRes { 42 }
         assertTrue(result.isOk)
         assertEquals(42, result.getOrNull())
@@ -41,7 +41,7 @@ class FailMappingRailTest {
 
     @Test
     fun `railway operations work inside invoke`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
             val x = Res.ok(10).orFail()
@@ -54,7 +54,7 @@ class FailMappingRailTest {
 
     @Test
     fun `fail short-circuits inside invoke`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result: Res<Int, String> = appRes {
             fail("explicit failure")
@@ -65,7 +65,7 @@ class FailMappingRailTest {
 
     @Test
     fun `orFail short-circuits inside invoke`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
             val x: Int = Res.failure("not found").orFail()
@@ -79,14 +79,14 @@ class FailMappingRailTest {
     fun `Error propagates through without being caught`() {
         val error = object : Error("fatal") {}
         assertFailsWith<Error> {
-            val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+            val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
             appRes { throw error }
         }
     }
 
     @Test
     fun `rethrows CancellationException`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
         assertFailsWith<CancellationException> {
             @Suppress("UNUSED_VARIABLE")
             val unused: Res<Int, String> = appRes { throw CancellationException("cancelled") }
@@ -95,7 +95,7 @@ class FailMappingRailTest {
 
     @Test
     fun `works with suspend lambdas`() = runTest {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result = appRes {
             delay(1)
@@ -107,7 +107,7 @@ class FailMappingRailTest {
 
     @Test
     fun `reusable across multiple calls`() {
-        val appRes = FailMappingRail<String> { e -> "Error: ${e.message}" }
+        val appRes = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
 
         val r1 = appRes { 1 }
         val r2: Res<Int, String> = appRes { throw IllegalStateException("fail") }
@@ -124,8 +124,8 @@ class FailMappingRailTest {
     }
 
     @Test
-    fun `constructor creates FailMappingRail`() {
-        val appRail = FailMappingRail<String> { e -> "Error: ${e.message}" }
+    fun `constructor creates ExceptionMappingRail`() {
+        val appRail = ExceptionMappingRail<String> { e -> "Error: ${e.message}" }
 
         val result: Res<Int, String> = appRail { throw RuntimeException("boom") }
         assertTrue(result.isFail)
@@ -137,7 +137,7 @@ class FailMappingRailTest {
     @Test
     fun `member extension catches exception and short-circuits outer scope`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "Error: ${e.message}" }
+            val io = catching { e -> "Error: ${e.message}" }
             io { throw RuntimeException("boom") }
         }
         assertTrue(result.isFail)
@@ -147,7 +147,7 @@ class FailMappingRailTest {
     @Test
     fun `member extension returns unwrapped value on success`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "Error: ${e.message}" }
+            val io = catching { e -> "Error: ${e.message}" }
             val x: Int = io { 42 }
             x + 1
         }
@@ -158,7 +158,7 @@ class FailMappingRailTest {
     @Test
     fun `member extension is reusable across multiple calls`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "Error: ${e.message}" }
+            val io = catching { e -> "Error: ${e.message}" }
             val a: Int = io { 10 }
             val b: Int = io { 20 }
             a + b
@@ -170,7 +170,7 @@ class FailMappingRailTest {
     @Test
     fun `member extension short-circuits on first exception`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "Error: ${e.message}" }
+            val io = catching { e -> "Error: ${e.message}" }
             val a: Int = io { 10 }
             io { throw RuntimeException("fail at b") }
             @Suppress("UNREACHABLE_CODE")
@@ -183,7 +183,7 @@ class FailMappingRailTest {
     @Test
     fun `member extension does not map fail calls`() {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "Mapped: ${e.message}" }
+            val io = catching { e -> "Mapped: ${e.message}" }
             io { fail("raw error") }
         }
         assertTrue(result.isFail)
@@ -195,7 +195,7 @@ class FailMappingRailTest {
         val error = object : Error("fatal") {}
         assertFailsWith<Error> {
             rail<Int, String> {
-                val io = failMapping { e -> "Error: ${e.message}" }
+                val io = catching { e -> "Error: ${e.message}" }
                 io { throw error }
             }
         }
@@ -205,7 +205,7 @@ class FailMappingRailTest {
     fun `member extension rethrows CancellationException`() {
         assertFailsWith<CancellationException> {
             rail<Int, String> {
-                val io = failMapping { e -> "Error: ${e.message}" }
+                val io = catching { e -> "Error: ${e.message}" }
                 io { throw CancellationException("cancelled") }
             }
         }
@@ -214,7 +214,7 @@ class FailMappingRailTest {
     @Test
     fun `member extension works with suspend lambdas`() = runTest {
         val result = rail<Int, String> {
-            val io = failMapping { e -> "Error: ${e.message}" }
+            val io = catching { e -> "Error: ${e.message}" }
             val x: Int = io {
                 delay(1)
                 42
@@ -229,7 +229,7 @@ class FailMappingRailTest {
 
     @Test
     fun `top-level invoke wraps mapper exception in ErrorMapperException`() {
-        val badMapper = FailMappingRail<String> { throw IllegalStateException("mapper broke") }
+        val badMapper = ExceptionMappingRail<String> { throw IllegalStateException("mapper broke") }
         val ex = assertFailsWith<ErrorMapperException> {
             badMapper { throw RuntimeException("original") }
         }
@@ -243,7 +243,7 @@ class FailMappingRailTest {
     fun `member extension wraps mapper exception in ErrorMapperException`() {
         val ex = assertFailsWith<ErrorMapperException> {
             rail<Int, String> {
-                val io = failMapping { throw IllegalStateException("mapper broke") }
+                val io = catching { throw IllegalStateException("mapper broke") }
                 io { throw RuntimeException("original") }
             }
         }
