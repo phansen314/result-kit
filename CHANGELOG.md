@@ -2,16 +2,14 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0]
 
 ### Added
 - **`binary-compatibility-validator` plugin** wired into the build. `./gradlew apiDump` captures the public ABI to `result-kit/api/result-kit.api`; `apiCheck` (part of `build`) fails CI if the captured surface drifts from what's committed. Important because nearly all public APIs are `inline` and reference `@PublishedApi internal` symbols (`Failure`, `FailException`, `Res.unsafeOk`) — any silent change to those breaks downstream jars compiled against an older shape.
 - `tap(onOk, onFail)` — combined Ok/Fail side effects in a single chain step. Both lambdas default to no-ops.
 - `Res<V, E>.toResult(transform: (E) -> Throwable)` overload for converting to `kotlin.Result` when `E` is not a `Throwable`.
-- `Validator.checkOr(default, res)` (and extension form `Res.checkOr(default)`) — non-null variant of `valueOrNull` that returns a sane fallback on Fail so dependent validations don't have to null-check.
 - `Res<V, E>.recover(transform: (E, List<Frame>) -> V)` overload (in `tech.codingzen.resultkit.context`) — observe frames before they're discarded by recovery, useful for logging "we recovered from X with context Y" without splitting into `.tap` + `.recover`.
 - `FrameTrace(frame: Frame)` — public `Throwable` view of a single [Frame] used to attach context to thrown errors via [Throwable.addSuppressed]. Stack-trace disabled; only the frame's message and location carry information.
-- **`FramedError<E>(error, frames)` and frame-retaining accumulators.** Accumulation paths collapse many failures into one `List<E>`, which has no per-error slot for context frames, so they drop them. The new `FramedError` carrier pairs each error with its frames, and opt-in `…Framed` siblings return `List<FramedError<E>>`: `zipOrAccumulateFramed` (arities 2–4), `Validator.errorsFramed()` / `toResFramed()`, `validationFramed { }`, the rail member `Validator<F>.orFailFramed { }`, and `Iterable.filterFailFramed()` / `partitionFramed()`. The existing `List<E>` paths (`zipOrAccumulate`, `validation`, `toRes`, `filterFail`, `partition`) are byte-for-byte unchanged — `Validator` keeps a lazily-allocated sparse frame side-table, so `ensure`-only validation pays no extra allocation. Unlike the frames-ignoring equality of the internal failure sentinel, `FramedError` is a data class whose frames participate in `equals`/`hashCode`.
 
 ### Changed
 - **`FailException.fillInStackTrace` now honours `-Dresultkit.debug=true`.** Default behavior remains a zero-cost no-op for the control-flow hot path; when the system property is set on the JVM command line, a real stack trace is captured so a stray `FailException` (e.g. one leaking past a `catch(Throwable)` interceptor) can be traced to its origin.
@@ -23,6 +21,7 @@ All notable changes to this project will be documented in this file. The format 
 - `orElse`: when fallible recovery itself fails, the original frames are now merged with the recovery's frames (`original.frames + rec.frames`) so the trail back to the original failure is preserved. Previously the original frames were discarded.
 
 ### Removed
+- **The error-accumulation subsystem is removed: `Validator` / `validation { }` / `validationFramed { }` / `validator()`, `ValidationMapping`, `FramedError`, `zipOrAccumulate` / `zipOrAccumulateFramed`, and the `…Framed` iterable helpers (`filterFailFramed`, `partitionFramed`).** Accumulating all errors of a request is what the mature JVM validation ecosystem (Jakarta Bean Validation, Konform, Valiktor) already does well; those drop into `rail { }` in a line or two by mapping their result into your error type `E`. Removing the bespoke accumulator cuts the largest, most overload-heavy slice of the API surface. **Migration:** run your validation library, then `ensure(violations.isEmpty()) { MyError.Invalid(violations.map { … }) }` (or wrap a throwing validator in `catching { }`); see the [Validation section of the guide](docs/guide.md#validation). Fail-fast `zip` (arities 2–4) and the plain `Iterable<Res>` helpers (`filterFail`, `partition`, `combine`, `tryMap`, `tryForEach`) are unchanged.
 - **`result-kit-ksp` (`@TraceContext`) is no longer part of the build or shipped.** The KSP traced-wrapper processor — a convenience layer that auto-generated the `.context(...)` decorators you can write by hand with `.context { }` — was ~28% of the codebase and the dominant maintenance/bug surface, for a feature with no demand yet. It is kept on disk under `result-kit-ksp/` (detached from `settings.gradle.kts`) and may return as a standalone module in a future release. The `@TraceContext`/`@TraceMessage`/`@TraceInclude` annotations moved out of core into that module, so the core jar carries nothing KSP-related. Manual `.context { }` / `withFrame` / `orFailContext` are unaffected.
 
 ### Fixed
@@ -52,6 +51,6 @@ Major redesign around the `Res<V, E>` inline value class and the `rail {}` DSL. 
 
 Initial release.
 
-[Unreleased]: https://github.com/phansen314/result-kit/compare/v1.1.0...HEAD
+[2.0.0]: https://github.com/phansen314/result-kit/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/phansen314/result-kit/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/phansen314/result-kit/releases/tag/v1.0.0

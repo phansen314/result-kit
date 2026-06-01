@@ -110,12 +110,12 @@ You define `ContextualError` and the chaining logic yourself.
 | | Result-Kit | kotlin-result |
 |---|---|---|
 | Pair zip | `zip(b1, b2) { ... }` | `zip(b1, b2) { ... }` |
-| Higher arity | `zip`/`zipOrAccumulate` (2–4) | `zip`/`zipOrAccumulate` (up to 5) |
+| Higher arity | `zip` (2–4), fail-fast only | `zip`/`zipOrAccumulate` (up to 5) |
 | Iterable | `combine`, `partition`, `tryMap`, `tryForEach`, `allOk`, `anyOk`, etc. | `combine`, `partition`, `andThen` chains, `getAll`, etc. |
-| Validator | `Validator<E>` + `validation { }` accumulator | no first-class accumulator |
+| Accumulation | none — use a JVM validation library | `zipOrAccumulate`, `getAll` |
 | Interop | `Result<V>.toRes()` / `Res<V, E>.toResult()` | `kotlinx-result` → stdlib `kotlin.Result` interop is manual |
 
-Result-Kit's `Validator` is the biggest functional addition. For accumulating > 4 validation errors without `zipOrAccumulate`'s arity cap, the imperative `validator<E>()` pattern is convenient.
+Result-Kit deliberately ships no error accumulator: collecting all of a request's validation errors is delegated to the mature JVM ecosystem (Jakarta Bean Validation, Konform, Valiktor), which maps into a `rail { }` in a line. kotlin-result includes `zipOrAccumulate` if you prefer it in-library.
 
 ## Exception handling
 
@@ -160,7 +160,7 @@ kotlin-result has been around since 2017 with steady releases, broad adoption, a
 
 ## Learning curve
 
-Both are small. kotlin-result's API surface is `Result<V, E>`, `Ok`/`Err`, `binding { }`, and a set of combinators (`map`, `mapError`, `andThen`, `getOr*`). Result-Kit's surface adds the mapping-scope concept (`catching`/`mapping`/`catchingMapping`/`validation`) plus context frames. Both can be productively learned in an afternoon.
+Both are small. kotlin-result's API surface is `Result<V, E>`, `Ok`/`Err`, `binding { }`, and a set of combinators (`map`, `mapError`, `andThen`, `getOr*`). Result-Kit's surface adds the mapping-scope concept (`catching`/`mapping`/`catchingMapping`) plus context frames. Both can be productively learned in an afternoon.
 
 ## When to use which
 

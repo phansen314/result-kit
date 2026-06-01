@@ -91,9 +91,6 @@ Result-Kit has four scope types, each standalone with no inheritance between the
 | `ExceptionMappingRail<E>` | Exception translation | Yes | No |
 | `ErrorMappingRail<D, E>` | Typed error translation | No | Yes |
 | `MappingRail<D, E>` | Both | Yes | Yes |
-| `ValidationMapping<F, E>` | Error accumulation + mapping | No | Yes |
-
-**Why no `Rail` suffix on `ValidationMapping`?** The `*Rail` types all create a `Rail<E>()` scope internally in their top-level invoke. `ValidationMapping` creates a `Validator<F>()` instead — it accumulates errors rather than short-circuiting. The name reflects this: it maps validation errors, not rail errors.
 
 **Why no inheritance?** The scopes have different type parameters and different invoke signatures. An inheritance hierarchy would require complex generics, and the overlapping methods would need to be carefully overridden. Duplicating the few shared methods across standalone classes is simpler, produces clearer error messages, and avoids constraining future changes.
 
@@ -182,8 +179,6 @@ The alternative — a wrapper like `Traced<Res<V, E>>` or an error wrapper like 
 
 Storing frames inside the internal `Failure` sentinel keeps the public API entirely unchanged. `Res<V, E>` stays `Res<V, E>`. Consumers who don't care about context are completely unaffected. Consumers who do care call `.contextChain()` or `.renderContext()` at the reporting boundary.
 
-The one place a wrapper type *is* used — `FramedError<E>(error, frames)` — is deliberately confined to **accumulation**, where the result is already a collection (`List<E>`) rather than a bare `Res<V, E>`. Collapsing N failures into one loses the per-error frame association that a single `Failure` holds for free, and a `List<E>` has nowhere to put it. There the wrapper costs no signature friction on the normal flow (it appears only inside the `…Framed` opt-in functions) while restoring the pairing. See "Where frames are dropped, and how to keep them" below.
-
 ### Zero cost on the Ok path
 
 `.context(message: () -> String)` performs one `instanceof Failure` check. On Ok, it returns `this` immediately. The lambda is never allocated and never evaluated. On Fail, one new `Failure` is allocated with the frame list extended by one entry.
@@ -221,9 +216,9 @@ A handful of paths drop frames — always for a structural reason, never silentl
 - **Recovery to Ok** — `recover` and a successful `orElse` produce an Ok, which carries no frames (above).
 - **Leaving the type system** — `toResult()` maps to stdlib `Result`, which has no frame slot; `getOrThrow()` throws the bare error unless you opt in with `attachFrames = true` (which re-attaches frames as suppressed `FrameTrace` entries).
 - **Exception-caught mapping** — when a mapping rail catches a real `Exception`, there is no `Failure` and thus no frames to carry; the resulting failure starts empty.
-- **Accumulation** — `zipOrAccumulate`, `Validator`/`validation`, and `filterFail`/`partition` collapse many failures into one `List<E>`. `List<E>` has no per-error slot for frames, so they are dropped.
+- **Collection extraction** — `filterFail` / `partition` pull bare `E` values out of an `Iterable<Res>`; `List<E>` has no per-error slot for frames. (Fail-fast `combine` / `tryMap` short-circuit on a single `Failure`, so they preserve its frames.)
 
-The accumulation case is the one where you might genuinely want the frames back. The library keeps **errors** (`List<E>`, domain values) and **frames** (observability) separate rather than forcing every error type to be frame-bearing — `E` can be a bare `String`. So retention is opt-in through a small paired carrier, `FramedError<E>(error, frames)`, and `…Framed` siblings: `zipOrAccumulateFramed`, `validationFramed` / `Validator.toResFramed` / `errorsFramed` / `orFailFramed`, `filterFailFramed`, `partitionFramed`. The default `List<E>` paths are unchanged — `Validator` keeps a lazily-allocated sparse frame side-table so an `ensure`-only validation pays nothing.
+If you need the trail to survive a reporting boundary, read it off the `Res` *before* you leave the type system (`contextChain()` / `renderContext()`), or opt into `getOrThrow(attachFrames = true)`.
 
 ## Binary Compatibility
 

@@ -115,7 +115,7 @@ fun validateRegistration(
 
 `ensure` short-circuits if the condition is false. `ensureNotNull` short-circuits if the value is null and returns the non-null value otherwise.
 
-> **Note:** `rail {}` short-circuits on the **first** error. If you need all validation errors at once, use `zipOrAccumulate` (see [Combining Results](#combining-results)).
+> **Note:** `rail {}` short-circuits on the **first** error. If you need *all* validation errors at once, reach for a validation library (Bean Validation, Konform, Valiktor) and map its result into your error type — see [Combining Results](#combining-results).
 
 ## Handling Exceptions
 
@@ -248,66 +248,40 @@ val result: Res<Dashboard, String> = zip(
 }
 ```
 
-`zip` short-circuits on the first failure. For validation scenarios where you want **all** errors at once, use `zipOrAccumulate`:
+`zip` short-circuits on the first failure and supports arities 2 through 4.
+
+### Accumulating all errors — use a validation library
+
+`zip` and `rail {}` are **fail-fast**: they stop at the first error. When you want to report *every*
+error at once (the classic "form with five bad fields" case), reach for the JVM validation library you
+most likely already have — [Jakarta Bean Validation](https://beanvalidation.org/),
+[Konform](https://github.com/konform-kt/konform), or [Valiktor](https://github.com/valiktor/valiktor).
+They accumulate violations internally; you map the result into your error type and drop it into `rail {}`:
 
 ```kotlin
-val result: Res<User, List<String>> = zipOrAccumulate(
-    { validateName(name) },
-    { validateEmail(email) },
-    { validateAge(age) },
-) { validName, validEmail, validAge ->
-    User(validName, validEmail, validAge)
-}
-// All three run. If name and age fail:
-// Res.Fail(["Name too short", "Age must be positive"])
-```
-
-Both support arities 2 through 4.
-
-For more than four checks, or when the validators don't fit a fixed-arity zip, use `validation {}` directly. It exposes a `Validator<E>` that accumulates errors across the block:
-
-```kotlin
-val result: Res<Unit, List<String>> = validation {
-    ensure(name.isNotBlank()) { "Name required" }
-    ensure(email.contains('@')) { "Invalid email" }
-    ensure(age in 13..150) { "Invalid age" }
-    check(verifyAddress(address))    // drains a Res<*, String> into the accumulator
-}
-```
-
-Inside `rail {}` you bridge an accumulating validator into the rail with a `ValidationMapping`:
-
-```kotlin
-fun register(req: Request): Res<User, AppError> = rail {
-    val v = validation<String> { errs -> AppError.Validation(errs) }
-    v {
-        ensure(req.name.isNotBlank()) { "Name required" }
-        ensure(req.email.contains('@')) { "Invalid email" }
+// Libraries that RETURN all violations (Bean Validation, Konform) — no exception needed:
+fun register(req: Request, validator: jakarta.validation.Validator): Res<User, AppError> = rail {
+    val violations = validator.validate(req)               // Set<ConstraintViolation<Request>>
+    ensure(violations.isEmpty()) {
+        AppError.Validation(violations.map { "${it.propertyPath}: ${it.message}" })
     }
-    // … if v collected any errors, the rail short-circuited above with AppError.Validation
+    saveUser(req).orFail()
+}
+
+// Libraries that THROW with all violations (Valiktor) — wrap in catching:
+fun register(req: Request): Res<User, AppError> = rail {
+    val validate = catching { e ->
+        AppError.Validation((e as ConstraintViolationException).constraintViolations.map { it.property })
+    }
+    validate { validate(req) { validate(Request::email).isEmail() } }
     saveUser(req).orFail()
 }
 ```
 
-For imperative style — adding errors from arbitrary control flow before producing a single `Res` — use the `Validator.validator<E>()` factory.
-
-> **Frames and accumulation.** When you `check(someRes)` into a validator (or use `zipOrAccumulate`),
-> the accumulated error type is a bare `List<E>` — it has no slot for the context frames that
-> `someRes` carried, so they are dropped. If you need each error *with* its trail, reach for the
-> frame-retaining variants, which return `List<FramedError<E>>`:
->
-> ```kotlin
-> val result: Res<Unit, List<FramedError<String>>> = validationFramed {
->     check(verifyAddress(address))     // keeps verifyAddress's frames
->     ensure(age in 13..150) { "Invalid age" }   // no frames
-> }
-> result.errorOrNull()?.forEach { println("${it.error}  ${it.frames}") }
-> ```
->
-> `zipOrAccumulateFramed`, `Validator.toResFramed()`/`errorsFramed()`, `orFailFramed`, and
-> `filterFailFramed`/`partitionFramed` are the matching siblings. Alternatively, if you only need the
-> *first* failure with full context, `rail {} + orFailContext` short-circuits and keeps the frames
-> without any accumulation.
+This keeps result-kit focused on control flow and error *propagation*, and leaves field/bean validation
+to libraries built for it. If you only need to gather errors from a handful of your own `Res`-returning
+checks, `listOf(checkA(), checkB(), checkC()).filterFail()` returns every error (see
+[Working with Collections](#working-with-collections)).
 
 ## Working with Collections
 
@@ -447,41 +421,24 @@ sealed class RegistrationError {
     data class Email(val message: String) : RegistrationError()
 }
 
-// Validation functions return Res<V, String>
-fun validateName(name: String): Res<String, String> = rail {
-    ensure(name.isNotBlank()) { "Name cannot be blank" }
-    ensure(name.length <= 100) { "Name too long" }
-    name.trim()
-}
-
-fun validateEmail(email: String): Res<String, String> = rail {
-    ensure(email.contains('@')) { "Invalid email" }
-    email.lowercase().trim()
-}
-
-fun validatePassword(password: String): Res<String, String> = rail {
-    ensure(password.length >= 8) { "Password too short" }
-    ensure(password.any { it.isDigit() }) { "Must contain a digit" }
-    password
-}
+// The request carries Bean Validation constraints; @field:NotBlank, @field:Email, @field:Size, etc.
+// The validation library accumulates ALL violations for us — result-kit just maps them in.
+data class Request(val name: String, val email: String, val password: String)
 
 // Registration flow
 suspend fun registerUser(
-    name: String,
-    email: String,
-    password: String,
+    req: Request,
+    validator: jakarta.validation.Validator,
 ): Res<User, RegistrationError> = rail {
-    // Validate all fields, accumulate errors
-    val (validName, validEmail, validPassword) = zipOrAccumulate(
-        { validateName(name) },
-        { validateEmail(email) },
-        { validatePassword(password) },
-    ) { n, e, p -> Triple(n, e, p) }
-        .orFail { errors -> RegistrationError.Validation(errors) }
+    // Validate all fields at once — Bean Validation returns every violation, not just the first.
+    val violations = validator.validate(req)
+    ensure(violations.isEmpty()) {
+        RegistrationError.Validation(violations.map { "${it.propertyPath}: ${it.message}" })
+    }
 
     // Save to database (may throw)
     val db = catching { e -> RegistrationError.Database("DB error: ${e.message}") }
-    val user = db { userRepository.create(validName, validEmail, validPassword) }
+    val user = db { userRepository.create(req.name, req.email, req.password) }
 
     // Send welcome email (may throw)
     val mail = catching { e -> RegistrationError.Email("Email error: ${e.message}") }
@@ -492,8 +449,7 @@ suspend fun registerUser(
 ```
 
 This example demonstrates:
-- `zipOrAccumulate` to collect all validation errors at once
-- `orFail { }` to translate accumulated `List<String>` errors into the domain error type
+- An external validation library collecting all field errors at once, mapped into the domain error type with a single `ensure`
 - Separate `catching` scopes for database and email, each with their own error mapping
 - The entire flow reads top-to-bottom as straight-line code despite having multiple failure modes
 

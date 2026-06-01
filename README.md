@@ -57,7 +57,7 @@ Built on a `Res<V, E>` inline value class (zero allocation on the Ok path) and a
 
 ```kotlin
 dependencies {
-    implementation("tech.codingzen:result-kit:1.1.0")
+    implementation("tech.codingzen:result-kit:2.0.0")
 }
 ```
 
@@ -74,7 +74,7 @@ Result-Kit follows [Semantic Versioning](https://semver.org/). From `1.1.0` onwa
 **What counts as a breaking change:**
 
 - Any API surface listed in the `.api` dump is part of the stability commitment.
-- The names of public scope types (`ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`, `ValidationMapping`) and factory functions (`catching`, `mapping`, `catchingMapping`, `validation`, `rail`).
+- The names of public scope types (`ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`) and factory functions (`catching`, `mapping`, `catchingMapping`, `rail`).
 - The semantics of frame propagation through `map`, `mapError`, `orElse`, `recover`, and rail boundaries.
 - Behavior of `FailException` (extends `Throwable`, no stack trace by default, honours `-Dresultkit.debug`).
 
@@ -88,6 +88,8 @@ Result-Kit follows [Semantic Versioning](https://semver.org/). From `1.1.0` onwa
 The library is JVM-only at present. Kotlin Multiplatform support is a future possibility but not committed.
 
 ## Quick Start
+
+> **New here?** This README is the reference. For a start-to-finish tutorial, read the **[Guide](docs/guide.md)** — it builds up from your first `Res` to full pipelines. You only need `rail {}`, `orFail`, `fail`, and `ensure` to be productive; everything else is incremental.
 
 Operations that can fail return `Res<V, E>` — either `Ok` with a value or `Fail` with a typed error. The `rail {}` DSL lets you compose them with automatic short-circuiting:
 
@@ -147,8 +149,8 @@ rail {
 |---|---|---|
 | [Guide](docs/guide.md) | Developers | Full tutorial with examples for every feature |
 | [Design](docs/design.md) | Contributors | Architecture, invariants, design rationale |
-| [vs kotlin-result](docs/vs-kotlin-result.md) | Evaluators | Feature comparison with kotlin-result (coming soon) |
-| [vs Arrow](docs/vs-arrow.md) | Evaluators | Feature comparison with Arrow (coming soon) |
+| [vs kotlin-result](docs/vs-kotlin-result.md) | Evaluators | Feature comparison with kotlin-result |
+| [vs Arrow](docs/vs-arrow.md) | Evaluators | Feature comparison with Arrow |
 
 ## Important: Exception Handling Inside `rail {}`
 
@@ -187,7 +189,7 @@ A compact list of every public symbol. The [Guide](docs/guide.md) walks through 
 | `recover { transform }` | Infallible Fail → Ok. Frames discarded. |
 | `recover { error, frames -> transform }` | Frame-aware overload — observe frames before they are discarded (e.g. logging). |
 | `orElse { transform }` | Fallible recovery — the recovery may itself fail with a different error type. On Fail → Fail, frames are merged. |
-| `flatMap { transform }` | Chain `(V) -> Res<U, E>` outside `rail {}`. The DSL is preferred. |
+| `flatMap { transform }` | Chain `(V) -> Res<U, E>` **outside** `rail {}`. Inside a rail, prefer `orFail()` — that's the primary composition style; reach for `flatMap` only when you're not in a `rail {}` block. |
 | `flatten()` | Unwrap `Res<Res<V, E>, E>`. |
 | `onOk { action }` / `onFail { action }` | Side effect on one branch. |
 | `tap(onOk, onFail)` | Side effects on both branches in one call (both default to no-op). |
@@ -219,37 +221,45 @@ All four scopes are reusable values. Each invokes one way at the top level (retu
 | `ExceptionMappingRail<E>` | `catching { (Exception) -> E }` | `io { block }` returns `V` |
 | `ErrorMappingRail<D, E>` | `mapping<D> { (D) -> E }` | `res.orFail(mapping)` or `mapping(res)` |
 | `MappingRail<D, E>` | `catchingMapping<D>(onError, onException)` | `m { block returning Res<V, D> }` returns `V` |
-| `ValidationMapping<F, E>` | `validation<F> { (List<F>) -> E }` | `v { Validator<F>.() -> Unit }` |
 
-Companion factories — `Rail.catching`, `Rail.mapping`, `Rail.catchingMapping`, `Rail.validation` — exist for top-level use.
+Companion factories — `Rail.catching`, `Rail.mapping`, `Rail.catchingMapping` — exist for top-level use.
 
-### Validation
+### Validation — use your validation library
 
-| Symbol | Description |
-|---|---|
-| `validation { Validator<E>.() -> Unit }` | Top-level entry. Returns `Res<Unit, List<E>>`. |
-| `Validator.validator<E>()` | Imperative factory — accumulate errors yourself, then call `.toRes()`. |
-| `validator.fail(error)` / `ensure` / `ensureNotNull` | Add errors. **Do not short-circuit.** |
-| `validator.check(res)` / `check(res) { mapError }` | Drain a `Res` into the accumulator (drops the value; frames retained for the `…Framed` read-backs). |
-| `validator.valueOrNull(res)` / `valueOrNull(res) { mapError }` | Drain into the accumulator and return the Ok value or `null` on Fail. The `OrNull` suffix is a deliberate footgun warning — dependent code must guard for null. |
-| `validator.checkOr(default, res)` / `checkOr(default, res) { mapError }` | Like `valueOrNull` but returns [default] on Fail — non-null variant for when you have a sane fallback. |
-| `validator.toRes()` | Ok if no errors, Fail with the list otherwise. Plain `List<E>` — **frames dropped.** |
-| `validator.toResFramed()` / `errorsFramed()` / `validationFramed { }` | Frame-retaining variants — each error paired with its frames as `List<FramedError<E>>`. |
-| `Validator<F>.orFail { (List<F>) -> E }` | Inside `rail {}`: flush an imperative validator into the rail. |
-| `Validator<F>.orFailFramed { (List<FramedError<F>>) -> E }` | Inside `rail {}`: flush a validator, passing each error with its frames. |
+Result-Kit ships **no error accumulator**. Collecting all of a request's validation errors is what the
+mature JVM ecosystem already does well — [Jakarta Bean Validation](https://beanvalidation.org/),
+[Konform](https://github.com/konform-kt/konform), [Valiktor](https://github.com/valiktor/valiktor) —
+and they drop into `rail {}` in a line or two by mapping their result into your error type `E`:
+
+```kotlin
+// A library that returns all violations (Bean Validation, Konform):
+rail {
+    val violations = beanValidator.validate(req)               // Set<ConstraintViolation> / errors list
+    ensure(violations.isEmpty()) { AppError.Invalid(violations.map { it.message }) }
+    save(req).orFail()
+}
+
+// A library that throws with all violations (Valiktor):
+rail {
+    val v = catching { e -> AppError.Invalid((e as ConstraintViolationException).constraintViolations.map { it.property }) }
+    v { validate(req) { validate(Request::email).isEmail() } }
+    save(req).orFail()
+}
+```
+
+For ad-hoc, in-`rail` checks use `ensure` / `ensureNotNull` (they short-circuit on the first failure).
+For "collect errors across several `Res`-returning checks" without a library, fold them yourself —
+e.g. `listOf(a, b, c).filterFail()` gives every error (see [Composition](#composition)).
 
 ### Composition
 
 | Symbol | Description |
 |---|---|
 | `zip(b1, b2, …, transform)` | Fail-fast sequential composition (arities 2–4). Preserves the failing branch's frames. |
-| `zipOrAccumulate(b1, b2, …, transform)` | All blocks run; errors accumulated into `List<E>`. Frames dropped. |
-| `zipOrAccumulateFramed(b1, b2, …, transform)` | As `zipOrAccumulate`, into `List<FramedError<E>>` — frames retained. |
 | `Iterable<Res<V, E>>.allOk()` / `anyOk()` / `anyFail()` | Boolean queries. |
-| `Iterable<Res<V, E>>.filterOk()` / `filterFail()` | Extract values or errors (`filterFail` drops frames). |
-| `Iterable<Res<V, E>>.filterFailFramed()` | Extract errors with their frames as `List<FramedError<E>>`. |
+| `Iterable<Res<V, E>>.filterOk()` / `filterFail()` | Extract Ok values, or all Fail errors (`filterFail` drops frames). |
 | `Iterable<Res<V, E>>.combine()` | Fail-fast `Res<List<V>, E>` (preserves the failing element's frames). |
-| `Iterable<Res<V, E>>.partition()` / `partitionFramed()` | `Pair<List<V>, List<E>>` (frames dropped) / `… List<FramedError<E>>` (retained). |
+| `Iterable<Res<V, E>>.partition()` | `Pair<List<V>, List<E>>` — every element categorized (frames dropped). |
 | `Iterable<V>.tryMap { (V) -> Res<U, E> }` | Fail-fast map. |
 | `Iterable<V>.tryForEach { (V) -> Res<*, E> }` | Fail-fast iteration. |
 
@@ -261,9 +271,8 @@ Companion factories — `Rail.catching`, `Rail.mapping`, `Rail.catchingMapping`,
 | `Res<V, E>.context { message }` / `context(message, location)` | Append a frame to a Fail; no-op on Ok. |
 | `Res<V, E>.contextChain()` / `renderContext()` / `contextSummary()` / `contextMap()` | Read frames at the reporting boundary. |
 | `List<Frame>.findAttachment<T>()` | Find first attachment of a given type. |
-| `FramedError(error, frames)` | An error paired with its frames — produced by the `…Framed` accumulators (`zipOrAccumulateFramed`, `validationFramed`, `toResFramed`, `filterFailFramed`, `partitionFramed`). |
 
-For a single `Res`, an error and its frames already travel together — read them with `contextChain()`. The pairing only needs an explicit `FramedError` carrier when an **accumulator** collapses many failures into one `List<…>`: there `List<E>` has no per-error slot for frames, so the default paths drop them and the `…Framed` variants return `List<FramedError<E>>` instead. The `List<E>` paths are unchanged — no cost on the common (`ensure`-only) validation path.
+For a single `Res`, an error and its frames travel together — read them with `contextChain()` / `renderContext()` at the reporting boundary, before leaving the type system. Frames are dropped when you `toResult()`, `getOrThrow()` (unless `attachFrames = true`), `recover` to Ok, or extract bare errors with `filterFail` / `partition`.
 
 ### Top-level usage (outside `rail {}` blocks)
 

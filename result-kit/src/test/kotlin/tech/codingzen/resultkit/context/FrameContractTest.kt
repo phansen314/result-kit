@@ -7,9 +7,6 @@ import kotlin.test.*
  * Locks the frame contract across the whole API: which operations PRESERVE / APPEND / MERGE / DROP /
  * ATTACH context frames. The "drop" cases are asserted deliberately — locking them guards against an
  * operation silently starting to preserve (or vice versa) in a future refactor.
- *
- * Also covers the [FramedError] accumulation APIs that retain per-error frames through the
- * many-to-one collapse where the plain `List<E>` paths drop them.
  */
 class FrameContractTest {
 
@@ -170,20 +167,6 @@ class FrameContractTest {
     // ===================== DROP (locked, plain List<E> paths) =====================
 
     @Test
-    fun `zipOrAccumulate drops frames, keeps raw errors`() {
-        val result = zipOrAccumulate({ framedFail("e1", "f0") }, { framedFail("e2", "g0") }) { a: Int, b: Int -> a + b }
-        assertEquals(listOf("e1", "e2"), result.errorOrNull())
-        assertEquals(emptyList(), result.contextChain())
-    }
-
-    @Test
-    fun `validation check drops frames into a plain error list`() {
-        val result = validation<String> { check(framedFail("e", "f0", "f1")) }
-        assertEquals(listOf("e"), result.errorOrNull())
-        assertEquals(emptyList(), result.contextChain())
-    }
-
-    @Test
     fun `filterFail and partition drop frames`() {
         val list = listOf(Res.ok(1), framedFail("e", "f0"))
         assertEquals(listOf("e"), list.filterFail())
@@ -197,97 +180,5 @@ class FrameContractTest {
         val result = res.toResult()
         assertTrue(result.isFailure)
         assertSame(ex, result.exceptionOrNull())
-    }
-
-    // ===================== FramedError retention =====================
-
-    @Test
-    fun `validationFramed pairs each error with its frames`() {
-        val result = validationFramed<String> {
-            check(framedFail("e", "f0", "f1"))
-            ensure(false) { "plain" }
-        }
-        val errs = result.errorOrNull()!!
-        assertEquals(2, errs.size)
-        assertEquals(FramedError("e", listOf(Frame("f0"), Frame("f1"))), errs[0])
-        assertEquals(FramedError("plain", emptyList()), errs[1])
-    }
-
-    @Test
-    fun `validationFramed with only ensure errors carries empty frames`() {
-        val result = validationFramed<String> {
-            ensure(false) { "a" }
-            ensure(false) { "b" }
-        }
-        assertEquals(listOf(FramedError("a", emptyList()), FramedError("b", emptyList())), result.errorOrNull())
-    }
-
-    @Test
-    fun `Validator errorsFramed preserves order across mixed framed and frameless adds`() {
-        val v = Validator.validator<String>()
-        v.ensure(false) { "first" }
-        v.check(framedFail("second", "ctx"))
-        v.fail("third")
-        assertEquals(
-            listOf(
-                FramedError("first", emptyList()),
-                FramedError("second", listOf(Frame("ctx"))),
-                FramedError("third", emptyList()),
-            ),
-            v.errorsFramed(),
-        )
-        // plain read-back is unchanged
-        assertEquals(listOf("first", "second", "third"), v.errors())
-    }
-
-    @Test
-    fun `Validator check with mapError retains source frames`() {
-        val v = Validator.validator<String>()
-        val src: Res<Int, Int> = (Res.failure(42) as Res<Int, Int>).context { "ctx" }
-        v.check(src) { "code=$it" }
-        assertEquals(listOf(FramedError("code=42", listOf(Frame("ctx")))), v.errorsFramed())
-    }
-
-    @Test
-    fun `zipOrAccumulateFramed pairs each failing branch with its frames`() {
-        val result = zipOrAccumulateFramed(
-            { framedFail("e1", "f0") },
-            { Res.ok("ok") },
-            { framedFail("e3", "h0", "h1") },
-        ) { a: Int, b: String, c: Int -> "$a$b$c" }
-        assertEquals(
-            listOf(
-                FramedError("e1", listOf(Frame("f0"))),
-                FramedError("e3", listOf(Frame("h0"), Frame("h1"))),
-            ),
-            result.errorOrNull(),
-        )
-    }
-
-    @Test
-    fun `orFailFramed flushes framed errors into the rail error`() {
-        val result: Res<Int, String> = rail {
-            val v = Validator.validator<String>()
-            v.check(framedFail("bad", "ctx"))
-            v.ensure(false) { "also bad" }
-            v.orFailFramed { framed -> framed.joinToString("; ") { "${it.error}/${it.frames.size}" } }
-            1
-        }
-        assertEquals("bad/1; also bad/0", result.errorOrNull())
-    }
-
-    @Test
-    fun `filterFailFramed and partitionFramed retain frames`() {
-        val list = listOf(Res.ok(1), framedFail("e", "f0", "f1"))
-        assertEquals(listOf(FramedError("e", listOf(Frame("f0"), Frame("f1")))), list.filterFailFramed())
-        val (oks, fails) = list.partitionFramed()
-        assertEquals(listOf(1), oks)
-        assertEquals(listOf(FramedError("e", listOf(Frame("f0"), Frame("f1")))), fails)
-    }
-
-    @Test
-    fun `FramedError equality includes frames`() {
-        assertEquals(FramedError("e", listOf(Frame("a"))), FramedError("e", listOf(Frame("a"))))
-        assertNotEquals(FramedError("e", listOf(Frame("a"))), FramedError("e", emptyList()))
     }
 }

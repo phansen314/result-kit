@@ -126,9 +126,9 @@ Building a chain requires you to define `ContextualError` and propagate it yours
 
 ## Error accumulation
 
-Both libraries support fail-fast and accumulating composition.
+This is a deliberate divergence.
 
-**Arrow** has `zipOrAccumulate` for fixed-arity (up to 9) and `mapOrAccumulate` for collections:
+**Arrow** ships a full accumulation toolkit — `zipOrAccumulate` (fixed-arity up to 9) and `mapOrAccumulate` for collections:
 
 ```kotlin
 either<NonEmptyList<String>, User> {
@@ -140,17 +140,17 @@ either<NonEmptyList<String>, User> {
 }
 ```
 
-**Result-Kit** has `zipOrAccumulate` (arities 2-4) plus a stateful `Validator<E>` accumulator with a `validation { }` DSL:
+**Result-Kit** ships no accumulator on purpose. Gathering *all* of a request's validation errors is exactly what the mature JVM validation ecosystem (Jakarta Bean Validation, Konform, Valiktor) already does, and those drop into `rail { }` in a line by mapping their result into your `E`:
 
 ```kotlin
-val result: Res<Unit, List<String>> = validation {
-    ensure(name.isNotBlank()) { "Name required" }
-    ensure(email.contains('@')) { "Invalid email" }
-    check(verifyAddress(address))
+rail {
+    val errors = konformSchema.validate(req).errors          // your validation library
+    ensure(errors.isEmpty()) { AppError.Invalid(errors.map { it.message }) }
+    save(req).orFail()
 }
 ```
 
-Result-Kit caps the fixed-arity `zip` at 4 (Arrow at 9). For >4 validators you reach for `validation { }`.
+Result-Kit keeps only **fail-fast** composition in the box — `zip` (arities 2–4) for "stop at the first failure." If you want accumulation, bring the validator you almost certainly already have on the classpath rather than learning a second one.
 
 ## Dependency footprint
 

@@ -27,9 +27,7 @@ result-kit/          — core library (zero runtime dependencies)
     ExceptionMappingRail.kt     — exception-catching scope
     ErrorMappingRail.kt    — typed-error-mapping scope
     MappingRail.kt         — combined exception + typed-error scope
-    Validator.kt           — error accumulator, validation {} entry point
-    ValidationMapping.kt   — validation-to-rail bridge
-    Zip.kt                 — zip / zipOrAccumulate (arities 2-4)
+    Zip.kt                 — zip (fail-fast, arities 2-4)
     Iterable.kt            — collection extensions
     context/
       Frame.kt             — Frame, SourceLocation data classes
@@ -135,10 +133,9 @@ Inside `rail {}`, the receiver `Rail<E>` provides:
 - `catching(mapError: (Exception) -> E): ExceptionMappingRail<E>`
 - `mapping(mapError: (D) -> E): ErrorMappingRail<D, E>`
 - `catchingMapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>`
-- `validation(mapErrors: (List<F>) -> E): ValidationMapping<F, E>`
 
 **Companion factories** (top-level, return Res instead of short-circuiting):
-- `Rail.catching(...)`, `Rail.mapping(...)`, `Rail.catchingMapping(...)`, `Rail.validation(...)`
+- `Rail.catching(...)`, `Rail.mapping(...)`, `Rail.catchingMapping(...)`
 - `Rail.attempt(block: Rail<Exception>.() -> V): Res<V, Exception>` — convenience for `ExceptionMappingRail<Exception> { it }(block)`
 
 ### FailException
@@ -225,49 +222,13 @@ Constructor: `MappingRail(onError: (D) -> E, onException: (Exception) -> E)`
 
 ## Validation
 
-### Validator<E>
-
-Mutable error accumulator. Does NOT extend Rail. **Not thread-safe.**
-
-Operations:
-- `fail(error: E)` — adds error
-- `ensure(condition, error: () -> E)` — adds error if condition false (does NOT short-circuit)
-- `ensureNotNull(value: V?, error: () -> E)` — adds error if null (does NOT short-circuit)
-- `addAll(errors: Iterable<E>)` — bulk add
-- `Res<V, E>.check()` — if Fail, adds error; discards value
-- `Res<V, F>.check(mapError: (F) -> E)` — mapped variant
-- `Res<V, E>.valueOrNull(): V?` — if Fail, adds error, returns null; if Ok, returns value. Suffix `OrNull` signals a footgun — dependent validations must null-check.
-- `Res<V, F>.valueOrNull(mapError): V?` — mapped variant
-- `Res<V, E>.checkOr(default: V): V` — like `valueOrNull` but returns [default] on Fail (non-null). Use when you have a sane fallback.
-- `Res<V, F>.checkOr(default, mapError): V` — mapped variant
-- `check(res)`, `check(res, mapError)` — standalone variants of `check`
-- `valueOrNull(res)`, `valueOrNull(res, mapError)` — standalone variants
-- `checkOr(default, res)`, `checkOr(default, res, mapError)` — standalone variants
-- `hasErrors: Boolean`
-- `errors(): List<E>` — defensive copy
-- `toRes(): Res<Unit, List<E>>` — Ok if clean, Fail with error list if not
-- `errorsFramed(): List<FramedError<E>>` — each error paired with its context frames
-- `toResFramed(): Res<Unit, List<FramedError<E>>>` — frame-retaining variant of `toRes()`
-
-The plain `check`/`valueOrNull`/`checkOr`/`toRes` path drops the frames of any `Res` checked into it
-(the error becomes a bare `List<E>`). The `…Framed` read-backs retain them via a lazy sparse
-side-table — see "FramedError" under Error Context Chains.
-
-Top-level entry points:
-- `validation(block: Validator<E>.() -> Unit): Res<Unit, List<E>>`
-- `validationFramed(block: Validator<E>.() -> Unit): Res<Unit, List<FramedError<E>>>` — frame-retaining
-- `Validator.validator<E>(): Validator<E>` — factory for imperative use
-
-### ValidationMapping<F, E>
-
-Bridges accumulated validation errors into a rail scope.
-
-**Member extension (inside rail):** `operator fun <F> ValidationMapping<F, E>.invoke(block: Validator<F>.() -> Unit)`
-- Runs block on Validator, if errors → `fail(mapErrors(errors))`
-
-**Top-level invoke:** `operator fun <F, E> ValidationMapping<F, E>.invoke(block): Res<Unit, E>`
-
-**Rail member extension:** `Validator<F>.orFail(mapErrors: (List<F>) -> E)` — flushes imperative validator into rail
+Result-kit ships **no error accumulator** (removed in 2.0.0). Accumulating all of a request's
+validation errors is delegated to the JVM validation ecosystem (Jakarta Bean Validation, Konform,
+Valiktor): run the validator, then map its result/violations into the domain error `E` inside a rail
+(`ensure(violations.isEmpty()) { ... }`, or wrap a throwing validator in `catching { }`). In-rail
+`ensure`/`ensureNotNull` cover ad-hoc fail-fast checks. `Validator`, `validation {}`,
+`ValidationMapping`, `FramedError`, `zipOrAccumulate*`, and the `…Framed` iterable helpers no longer
+exist.
 
 ## Error Context Chains
 
@@ -324,32 +285,7 @@ Frames are stored in `Failure.frames: List<Frame>` (default `emptyList()`). Also
 | `.toResult()` / `.toResult(transform)` | stdlib `Result` has no frame slot — frames **dropped** |
 | `zip(...)` fail-fast | Returns first failing branch's `Failure` unchanged — **preserves frames** |
 | `combine()` / `tryMap` / `tryForEach` | Return first failing element's `Failure` unchanged — **preserves frames** |
-| `zipOrAccumulate(...)` | Error becomes `List<E>` (no per-error slot) — frames **dropped** |
-| `Validator.check / valueOrNull / checkOr` | Add only the error to `List<E>` via `toRes()` — frames **dropped** |
 | `filterFail()` / `partition()` | Extract only `E` — frames **dropped** |
-| `…Framed` accumulators (see below) | Each error paired with its frames in `List<FramedError<E>>` — **retains frames** |
-
-### FramedError: retaining frames when accumulating
-
-The default accumulation paths collapse many failures into one `List<E>`, which has no per-error slot
-for frames, so they drop them (rows above). The opt-in **`FramedError<E>(error, frames)`** carrier
-(`FramedError.kt`) and the `…Framed` siblings retain the per-error trail. Default `List<E>` paths are
-unchanged — no allocation tax on the common (`ensure`-only) validation path.
-
-- `zipOrAccumulateFramed(...)` (arities 2–4) → `Res<R, List<FramedError<E>>>`
-- `Validator.errorsFramed(): List<FramedError<E>>`, `Validator.toResFramed(): Res<Unit, List<FramedError<E>>>`
-- `validationFramed { }: Res<Unit, List<FramedError<E>>>`
-- `Rail` member `Validator<F>.orFailFramed(mapErrors: (List<FramedError<F>>) -> E)` — flush framed errors into a rail error
-- `Iterable.filterFailFramed(): List<FramedError<E>>`, `Iterable.partitionFramed(): Pair<List<V>, List<FramedError<E>>>`
-
-`Validator` keeps a lazily-allocated **sparse** side-table (`frameMap`, `null` until a frame-bearing
-`check()` lands) mapping error index → frames, so `ensure`/`fail`/`addAll` stay allocation-free and
-`errors()`/`toRes()` are byte-for-byte unchanged. Errors from `ensure`/`fail` carry
-`emptyList()` frames; errors from `check`/`valueOrNull`/`checkOr` carry the source `Res`'s frames
-(preserved across the `mapError` variants).
-
-Unlike `Failure.equals` (frames ignored — observability, not domain), `FramedError` is the explicit
-carry-the-frames type, so frames **do** participate in its `equals`/`hashCode` (data-class default).
 
 ### Rendering
 
@@ -422,11 +358,7 @@ Derived from KSP's `FileLocation`. Uses package-relative path for unambiguous id
 
 ## Composition: Zip
 
-`zip(block1, block2, ..., transform)` — fail-fast sequential, arities 2-4. Blocks evaluated in order; short-circuits on first Fail. All blocks are `() -> Res<V, E>`.
-
-`zipOrAccumulate(block1, block2, ..., transform)` — all blocks always evaluated, errors accumulated into `List<E>`. Note: error type changes from `E` to `List<E>`. Fail-fast `zip` preserves the failing branch's frames; `zipOrAccumulate` drops them (bare `List<E>`).
-
-`zipOrAccumulateFramed(...)` — frame-retaining variant returning `Res<R, List<FramedError<E>>>`; each failing branch is paired with its frames.
+`zip(block1, block2, ..., transform)` — fail-fast sequential, arities 2-4. Blocks evaluated in order; short-circuits on first Fail. All blocks are `() -> Res<V, E>`. Preserves the failing branch's frames. (For accumulating all errors, use a JVM validation library — see "Validation".)
 
 All have `callsInPlace` contracts (EXACTLY_ONCE for evaluated blocks, AT_MOST_ONCE for skippable ones and transform).
 
@@ -438,10 +370,8 @@ On `Iterable<Res<V, E>>`:
 - `anyFail(): Boolean` — true if at least one Fail (false for empty)
 - `filterOk(): List<V>` — collects Ok values
 - `filterFail(): List<E>` — collects Fail errors (frames dropped)
-- `filterFailFramed(): List<FramedError<E>>` — collects Fail errors with their frames
 - `combine(): Res<List<V>, E>` — fail-fast collect (preserves the failing element's frames)
 - `partition(): Pair<List<V>, List<E>>` — categorizes all elements (frames dropped)
-- `partitionFramed(): Pair<List<V>, List<FramedError<E>>>` — categorizes, retaining Fail frames
 
 On `Iterable<V>`:
 - `tryMap(transform: (V) -> Res<U, E>): Res<List<U>, E>` — fail-fast map
@@ -465,13 +395,11 @@ These are critical rules. Violating them will silently break the library.
 
 6. **`mapError` preserves frames.** When transforming a Fail error, the new `Failure` must carry the existing frames list. This is how context survives error type changes.
 
-   **6a. Accumulation drops frames; `…Framed` retains them.** Collapsing many failures into one `List<E>` (`zipOrAccumulate`, `Validator`/`validation`, `filterFail`/`partition`) drops per-error frames — `List<E>` has no slot for them. The opt-in `FramedError<E>` carrier and the `…Framed` siblings retain them; the default `List<E>` paths must stay byte-for-byte unchanged (no allocation tax on the frameless common path). `Validator`'s frame side-table must stay lazily-allocated and sparse.
-
 7. **Zero runtime dependencies.** The core module must not depend on anything beyond the Kotlin stdlib. The KSP module depends on `symbol-processing-api` (compile-time only for consumers). Do not add runtime dependencies.
 
-8. **Companion factories only.** `ok()`/`failure()` live on `Res.Companion`. `attempt()`/`catching()`/`mapping()`/`catchingMapping()`/`validation()` live on `Rail.Companion`. None are top-level functions.
+8. **Companion factories only.** `ok()`/`failure()` live on `Res.Companion`. `attempt()`/`catching()`/`mapping()`/`catchingMapping()` live on `Rail.Companion`. None are top-level functions.
 
-9. **Scope types are standalone.** `ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail`, `ValidationMapping` do not share an inheritance hierarchy. Methods are duplicated intentionally.
+9. **Scope types are standalone.** `ExceptionMappingRail`, `ErrorMappingRail`, `MappingRail` do not share an inheritance hierarchy. Methods are duplicated intentionally.
 
 10. **`flatMap` is an escape hatch.** The DSL (`rail {}` + `orFail()`) is the preferred composition style. `flatMap` exists for use outside `rail {}` blocks but is not the primary API.
 
