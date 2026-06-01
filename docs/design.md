@@ -182,6 +182,8 @@ The alternative — a wrapper like `Traced<Res<V, E>>` or an error wrapper like 
 
 Storing frames inside the internal `Failure` sentinel keeps the public API entirely unchanged. `Res<V, E>` stays `Res<V, E>`. Consumers who don't care about context are completely unaffected. Consumers who do care call `.contextChain()` or `.renderContext()` at the reporting boundary.
 
+The one place a wrapper type *is* used — `FramedError<E>(error, frames)` — is deliberately confined to **accumulation**, where the result is already a collection (`List<E>`) rather than a bare `Res<V, E>`. Collapsing N failures into one loses the per-error frame association that a single `Failure` holds for free, and a `List<E>` has nowhere to put it. There the wrapper costs no signature friction on the normal flow (it appears only inside the `…Framed` opt-in functions) while restoring the pairing. See "Where frames are dropped, and how to keep them" below.
+
 ### Zero cost on the Ok path
 
 `.context(message: () -> String)` performs one `instanceof Failure` check. On Ok, it returns `this` immediately. The lambda is never allocated and never evaluated. On Fail, one new `Failure` is allocated with the frame list extended by one entry.
@@ -210,11 +212,22 @@ Prepend would be more efficient (linked list, `O(1)` prepend vs `O(n)` list copy
 - **`orElse { ... }` returning Ok** — same as `recover`: frames discarded, the result is Ok.
 - **`orElse { ... }` returning Fail** — frames are merged as `original.frames + rec.frames`. The original frames sit before the recovery's frames so the chain reads from the most-specific original context outward through whatever context the recovery added. This preserves the trail back to the original failure when fallible recovery itself fails.
 
-This is the only operation that combines two frame lists. Every other propagation path either preserves frames unchanged (`map`, `mapError`, `flatMap`, `orFail`) or appends a single new frame (`.context`, `withFrame`, `orFailContext`).
+This is the only operation that combines two frame lists. Every other *propagation* path either preserves frames unchanged (`map`, `mapError`, `flatMap`, `flatten`, `orFail`, `zip`, `combine`/`tryMap`/`tryForEach`, mapping-rail boundaries) or appends a single new frame (`.context`, `contextFrame`, `withFrame`, `orFailContext`).
+
+### Where frames are dropped, and how to keep them
+
+A handful of paths drop frames — always for a structural reason, never silently:
+
+- **Recovery to Ok** — `recover` and a successful `orElse` produce an Ok, which carries no frames (above).
+- **Leaving the type system** — `toResult()` maps to stdlib `Result`, which has no frame slot; `getOrThrow()` throws the bare error unless you opt in with `attachFrames = true` (which re-attaches frames as suppressed `FrameTrace` entries).
+- **Exception-caught mapping** — when a mapping rail catches a real `Exception`, there is no `Failure` and thus no frames to carry; the resulting failure starts empty.
+- **Accumulation** — `zipOrAccumulate`, `Validator`/`validation`, and `filterFail`/`partition` collapse many failures into one `List<E>`. `List<E>` has no per-error slot for frames, so they are dropped.
+
+The accumulation case is the one where you might genuinely want the frames back. The library keeps **errors** (`List<E>`, domain values) and **frames** (observability) separate rather than forcing every error type to be frame-bearing — `E` can be a bare `String`. So retention is opt-in through a small paired carrier, `FramedError<E>(error, frames)`, and `…Framed` siblings: `zipOrAccumulateFramed`, `validationFramed` / `Validator.toResFramed` / `errorsFramed` / `orFailFramed`, `filterFailFramed`, `partitionFramed`. The default `List<E>` paths are unchanged — `Validator` keeps a lazily-allocated sparse frame side-table so an `ensure`-only validation pays nothing.
 
 ## Binary Compatibility
 
-The project uses the [`binary-compatibility-validator`](https://github.com/Kotlin/binary-compatibility-validator) Gradle plugin to track the public ABI. The captured API dumps live in `result-kit/api/result-kit.api` and `result-kit-ksp/api/result-kit-ksp.api` and are checked on every build.
+The project uses the [`binary-compatibility-validator`](https://github.com/Kotlin/binary-compatibility-validator) Gradle plugin to track the public ABI. The captured API dump lives in `result-kit/api/result-kit.api` and is checked on every build.
 
 Why this matters specifically for Result-Kit: almost every public API is `inline`. Inline functions are copied into the consumer's bytecode at compile time, so any change to a referenced `@PublishedApi internal` symbol (notably `Failure`, `FailException`, `Res.unsafeOk`) is an ABI break — old consumer jars compiled against an earlier shape will fail to link.
 

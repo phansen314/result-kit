@@ -291,6 +291,24 @@ fun register(req: Request): Res<User, AppError> = rail {
 
 For imperative style — adding errors from arbitrary control flow before producing a single `Res` — use the `Validator.validator<E>()` factory.
 
+> **Frames and accumulation.** When you `check(someRes)` into a validator (or use `zipOrAccumulate`),
+> the accumulated error type is a bare `List<E>` — it has no slot for the context frames that
+> `someRes` carried, so they are dropped. If you need each error *with* its trail, reach for the
+> frame-retaining variants, which return `List<FramedError<E>>`:
+>
+> ```kotlin
+> val result: Res<Unit, List<FramedError<String>>> = validationFramed {
+>     check(verifyAddress(address))     // keeps verifyAddress's frames
+>     ensure(age in 13..150) { "Invalid age" }   // no frames
+> }
+> result.errorOrNull()?.forEach { println("${it.error}  ${it.frames}") }
+> ```
+>
+> `zipOrAccumulateFramed`, `Validator.toResFramed()`/`errorsFramed()`, `orFailFramed`, and
+> `filterFailFramed`/`partitionFramed` are the matching siblings. Alternatively, if you only need the
+> *first* failure with full context, `rail {} + orFailContext` short-circuits and keeps the frames
+> without any accumulation.
+
 ## Working with Collections
 
 Result-Kit provides extensions for iterables of results:
@@ -338,7 +356,7 @@ suspend fun fetchDashboard(userId: Int): Res<Dashboard, String> = rail {
 }
 ```
 
-All exception-catching scopes (`catching`, `mapping`, `Rail.attempt`) rethrow `CancellationException`, so structured concurrency is preserved.
+All exception-catching scopes (`catching`, `catchingMapping`, `Rail.attempt`) rethrow `CancellationException`, so structured concurrency is preserved. (`mapping` does not catch exceptions at all, so `CancellationException` simply propagates through it unchanged.)
 
 ## Database Transactions
 
@@ -574,43 +592,6 @@ mapOf(
     ),
 )
 ```
-
-### @TraceContext — generating traced wrappers automatically
-
-For service layers with many `Res`-returning methods, the KSP module generates the `.context(...)` calls for you. Annotate an interface with `@TraceContext`:
-
-```kotlin
-import tech.codingzen.resultkit.context.TraceContext
-import tech.codingzen.resultkit.context.TraceInclude
-import tech.codingzen.resultkit.context.TraceMessage
-
-@TraceContext
-interface AuthService {
-    // Default: names only — safe, no values emitted
-    // generated: "AuthService.login(username, password)"
-    fun login(username: String, password: String): Res<Token, AuthError>
-
-    // @TraceInclude opts a param's value in explicitly
-    fun findById(@TraceInclude id: Int): Res<User, AuthError>
-    // generated: "AuthService.findById(id=${id})"
-
-    // @TraceMessage for full custom control
-    @TraceMessage("authenticating {username}")
-    fun authenticate(username: String, password: String): Res<Token, AuthError>
-
-    fun logout(token: String): Res<Unit, AuthError>
-}
-```
-
-KSP generates `AuthServiceTraced`. Wire it up:
-
-```kotlin
-val auth: AuthService = AuthServiceTraced(delegate = realAuthService)
-```
-
-Every call to `auth.authenticate(...)` now automatically attaches a context frame with the message `"authenticating ${username}"` (the `password` parameter is not interpolated — it has no `@TraceInclude`) and a `SourceLocation` pointing to the interface declaration. `auth.login(...)` (no `@TraceMessage`) gets the auto-generated `"AuthService.login(username, password)"` — parameter *names* only, since no `@TraceInclude`s opt their values in. Non-`Res` methods are delegated as-is.
-
-See the [API Reference](../README.md#tracecontext-annotations-result-kit-ksp) for annotation options.
 
 ## Common Pitfalls
 

@@ -122,21 +122,40 @@ public class Rail<E> @PublishedApi internal constructor() {
      * [Rail.fail] calls inside [block] bypass both mappers — they short-circuit the
      * outer rail directly. Only JVM exceptions and typed [Res] errors are mapped.
      * [CancellationException] is always rethrown to preserve structured concurrency.
+     *
+     * The two mappers have disjoint responsibilities: [MappingRail.onException] handles only
+     * exceptions thrown *inside* [block]; [MappingRail.onError] handles only the typed [Res]
+     * error. If `onError` itself throws, that is a bug in the mapper, not an unexpected runtime
+     * exception — it surfaces as [ErrorMapperException] (with the domain error carried in the
+     * message) rather than being rerouted through `onException`.
      */
     public inline operator fun <V, D> MappingRail<D, @UnsafeVariance E>.invoke(
         block: Rail<E>.() -> Res<V, D>
-    ): V =
-        try {
-            this@Rail.block().orFail { onError(it) }
+    ): V {
+        val res: Res<V, D> = try {
+            this@Rail.block()
         // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
         } catch (e: Exception) {
+            // Genuine exception thrown inside block → onException. fail(...) throws FailException
+            // (a Throwable, not Exception), so the inner catch only fires if onException itself throws.
             try { fail(onException(e)) } catch (me: Exception) {
                 if (me is kotlin.coroutines.cancellation.CancellationException) throw me
                 throw ErrorMapperException(e, me)
             }
         }
+        // onError mapping runs OUTSIDE the block-exception catch, so a throwing onError surfaces as
+        // ErrorMapperException instead of being misrouted through onException (which would discard D).
+        return res.orFail { d ->
+            try { onError(d) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(
+                    IllegalStateException("onError threw while mapping domain error: $d"), me,
+                )
+            }
+        }
+    }
 
     /** Creates a [ValidationMapping] for accumulating validation errors and flushing them into this rail. */
     public fun <F> validation(mapErrors: (List<F>) -> E): ValidationMapping<F, E> =
@@ -183,10 +202,31 @@ public class Rail<E> @PublishedApi internal constructor() {
      *     User(name, age, email)
      * }
      * ```
+     *
+     * [mapErrors] receives bare `List<F>`, so any frames on checked-in failures are dropped. Use
+     * [orFailFramed] to receive each error with its frames.
      */
     public inline fun <F> Validator<F>.orFail(mapErrors: (List<F>) -> E) {
         if (hasErrors) {
             val errors = errors()
+            try { this@Rail.fail(mapErrors(errors)) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(
+                    IllegalStateException("Validation failed with ${errors.size} error(s)"),
+                    me
+                )
+            }
+        }
+    }
+
+    /**
+     * Frame-retaining variant of [orFail]: flushes the validator's accumulated errors into this rail,
+     * passing each error paired with its context frames (see [FramedError]) to [mapErrors]. Use when
+     * the domain error should fold in the per-error context trail that plain [orFail] discards.
+     */
+    public inline fun <F> Validator<F>.orFailFramed(mapErrors: (List<FramedError<F>>) -> E) {
+        if (hasErrors) {
+            val errors = errorsFramed()
             try { this@Rail.fail(mapErrors(errors)) } catch (me: Exception) {
                 if (me is kotlin.coroutines.cancellation.CancellationException) throw me
                 throw ErrorMapperException(

@@ -93,6 +93,11 @@ public inline fun <V1, V2, V3, V4, E, R> zip(
  * This is useful for validation scenarios where you want to report all errors at once.
  *
  * @return Ok with the transformed value, or Fail with a list of all errors.
+ *
+ * The Fail error list is the internal accumulator; treat it as read-only (do not downcast and mutate).
+ *
+ * Errors accumulate as a bare `List<E>`, so any context frames on the failing branches are dropped.
+ * Use [zipOrAccumulateFramed] to retain each error's frames.
  */
 public inline fun <V1, V2, E, R> zipOrAccumulate(
     block1: () -> Res<V1, E>,
@@ -161,6 +166,88 @@ public inline fun <V1, V2, V3, V4, E, R> zipOrAccumulate(
     if (r2.inlineValue is Failure) errors.add((r2.inlineValue as Failure).error as E)
     if (r3.inlineValue is Failure) errors.add((r3.inlineValue as Failure).error as E)
     if (r4.inlineValue is Failure) errors.add((r4.inlineValue as Failure).error as E)
+    if (errors.isNotEmpty()) return Res.failure(errors)
+    return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2, r3.inlineValue as V3, r4.inlineValue as V4))
+}
+
+// -- zipOrAccumulateFramed (error accumulation, frames retained) --
+
+/**
+ * Frame-retaining variant of [zipOrAccumulate]: each failing branch contributes a [FramedError]
+ * pairing its error with the context frames it carried, so no observability is lost in the
+ * many-to-one collapse. All blocks are always evaluated.
+ *
+ * @return Ok with the transformed value, or Fail with a list of [FramedError] (one per failed block).
+ *
+ * The Fail list is the internal accumulator; treat it as read-only (do not downcast and mutate).
+ */
+public inline fun <V1, V2, E, R> zipOrAccumulateFramed(
+    block1: () -> Res<V1, E>,
+    block2: () -> Res<V2, E>,
+    transform: (V1, V2) -> R
+): Res<R, List<FramedError<E>>> {
+    contract {
+        callsInPlace(block1, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block2, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(transform, InvocationKind.AT_MOST_ONCE)
+    }
+    val r1 = block1()
+    val r2 = block2()
+    val errors = mutableListOf<FramedError<E>>()
+    if (r1.inlineValue is Failure) errors.add(FramedError((r1.inlineValue as Failure).error as E, (r1.inlineValue as Failure).frames))
+    if (r2.inlineValue is Failure) errors.add(FramedError((r2.inlineValue as Failure).error as E, (r2.inlineValue as Failure).frames))
+    if (errors.isNotEmpty()) return Res.failure(errors)
+    return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2))
+}
+
+/** Overload of [zipOrAccumulateFramed] for three results. See the two-parameter overload for full documentation. */
+public inline fun <V1, V2, V3, E, R> zipOrAccumulateFramed(
+    block1: () -> Res<V1, E>,
+    block2: () -> Res<V2, E>,
+    block3: () -> Res<V3, E>,
+    transform: (V1, V2, V3) -> R
+): Res<R, List<FramedError<E>>> {
+    contract {
+        callsInPlace(block1, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block2, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block3, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(transform, InvocationKind.AT_MOST_ONCE)
+    }
+    val r1 = block1()
+    val r2 = block2()
+    val r3 = block3()
+    val errors = mutableListOf<FramedError<E>>()
+    if (r1.inlineValue is Failure) errors.add(FramedError((r1.inlineValue as Failure).error as E, (r1.inlineValue as Failure).frames))
+    if (r2.inlineValue is Failure) errors.add(FramedError((r2.inlineValue as Failure).error as E, (r2.inlineValue as Failure).frames))
+    if (r3.inlineValue is Failure) errors.add(FramedError((r3.inlineValue as Failure).error as E, (r3.inlineValue as Failure).frames))
+    if (errors.isNotEmpty()) return Res.failure(errors)
+    return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2, r3.inlineValue as V3))
+}
+
+/** Overload of [zipOrAccumulateFramed] for four results. See the two-parameter overload for full documentation. */
+public inline fun <V1, V2, V3, V4, E, R> zipOrAccumulateFramed(
+    block1: () -> Res<V1, E>,
+    block2: () -> Res<V2, E>,
+    block3: () -> Res<V3, E>,
+    block4: () -> Res<V4, E>,
+    transform: (V1, V2, V3, V4) -> R
+): Res<R, List<FramedError<E>>> {
+    contract {
+        callsInPlace(block1, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block2, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block3, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block4, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(transform, InvocationKind.AT_MOST_ONCE)
+    }
+    val r1 = block1()
+    val r2 = block2()
+    val r3 = block3()
+    val r4 = block4()
+    val errors = mutableListOf<FramedError<E>>()
+    if (r1.inlineValue is Failure) errors.add(FramedError((r1.inlineValue as Failure).error as E, (r1.inlineValue as Failure).frames))
+    if (r2.inlineValue is Failure) errors.add(FramedError((r2.inlineValue as Failure).error as E, (r2.inlineValue as Failure).frames))
+    if (r3.inlineValue is Failure) errors.add(FramedError((r3.inlineValue as Failure).error as E, (r3.inlineValue as Failure).frames))
+    if (r4.inlineValue is Failure) errors.add(FramedError((r4.inlineValue as Failure).error as E, (r4.inlineValue as Failure).frames))
     if (errors.isNotEmpty()) return Res.failure(errors)
     return Res.unsafeOk(transform(r1.inlineValue as V1, r2.inlineValue as V2, r3.inlineValue as V3, r4.inlineValue as V4))
 }

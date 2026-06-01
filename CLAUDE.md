@@ -5,9 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Test
 
 ```bash
-./gradlew build                          # Compile + test (all modules)
+./gradlew build                          # Compile + test
 ./gradlew :result-kit:test               # Core module tests only
-./gradlew :result-kit-ksp:test           # KSP module tests only
 ./gradlew :result-kit:test --tests "tech.codingzen.resultkit.ResTest"           # Single test class
 ./gradlew :result-kit:test --tests "tech.codingzen.resultkit.ResTest.testName"  # Single test method
 ```
@@ -36,11 +35,15 @@ result-kit/          — core library (zero runtime dependencies)
       Frame.kt             — Frame, SourceLocation data classes
       ContextExtensions.kt — .context(), contextFrame(), extended fold()
       ContextRendering.kt  — contextChain(), renderContext(), contextSummary(), contextMap(), findAttachment()
-      TraceAnnotations.kt  — @TraceContext, @TraceMessage, @TraceInclude
 
-result-kit-ksp/      — KSP annotation processor (depends on result-kit; compile-time only for consumers)
-  src/main/kotlin/tech/codingzen/resultkit/ksp/
-    TraceContextProcessor.kt    — KSP processor and provider
+result-kit-ksp/      — KSP annotation processor. DETACHED FROM THE BUILD (not in settings.gradle.kts
+                       include(...), not shipped). Kept on disk for a future release. Owns the
+                       @TraceContext/@TraceMessage/@TraceInclude annotations (moved out of core so the
+                       core jar carries nothing KSP-related). To work on it, temporarily re-add
+                       ":result-kit-ksp" to settings.gradle.kts.
+  src/main/kotlin/tech/codingzen/resultkit/
+    ksp/TraceContextProcessor.kt          — KSP processor and provider
+    context/TraceAnnotations.kt           — @TraceContext, @TraceMessage, @TraceInclude
   src/main/resources/META-INF/services/
     com.google.devtools.ksp.processing.SymbolProcessorProvider
 ```
@@ -68,8 +71,8 @@ Accessors:
 - `getOrNull(): V?` — Ok value or null
 - `errorOrNull(): E?` — Fail error or null
 - `getOrElse(default: (E) -> V): V`
-- `getOrThrow(): V` — requires `E : Throwable`. Attached context frames are added to the thrown error as `Throwable.addSuppressed(FrameTrace(frame))` entries so the breadcrumb chain survives the JVM throw boundary and appears in standard stack dumps.
-- `getOrThrow(transform: (E) -> Throwable): V` — frames likewise attached as suppressed `FrameTrace` entries on the transformed throwable.
+- `getOrThrow(attachFrames: Boolean = false): V` — requires `E : Throwable`. By default unwraps the Ok value or throws the error **untouched**. Pass `attachFrames = true` to add context frames to the thrown error as `Throwable.addSuppressed(FrameTrace(frame))` entries so the breadcrumb chain survives the JVM throw boundary and appears in standard stack dumps. **Attachment is opt-in because it mutates the thrown error in place** — not idempotent, and unsafe for shared/`object` errors reused across results (frames accumulate/intermix on the shared instance).
+- `getOrThrow(attachFrames: Boolean = false, transform: (E) -> Throwable): V` — same opt-in `attachFrames` flag, off by default. When `transform` builds a fresh throwable per call (the common case), attaching is safe even on repeated calls.
 - `errorOrThrow(): E` — throws ISE on Ok
 
 Transforms:
@@ -162,7 +165,11 @@ All three scope types follow a dual-invoke pattern:
 - **Top-level invoke** (extension function): creates its own `Rail`, returns `Res<V, E>`
 - **Inside `rail {}` invoke** (member extension on `Rail`): uses the outer `Rail`, returns unwrapped `V`, short-circuits on failure
 
-Kotlin member extension dispatch priority ensures the member extension wins inside `rail {}`.
+Kotlin member extension dispatch priority ensures the member extension wins inside `rail {}`. The
+consequence is a **context-dependent return type**: the same scope-invoke call yields `V` inside a
+`rail {}` block but `Res<V, E>` outside one — resolved by lexical context, not call syntax. The
+compiler enforces the correct overload (a mismatch is a compile error), so it is type-safe but not
+locally obvious; readers must note the enclosing scope.
 
 ### ExceptionMappingRail<E>
 
@@ -207,10 +214,14 @@ Constructor: `MappingRail(onError: (D) -> E, onException: (Exception) -> E)`
 
 **Member extension (inside rail):** `operator fun <V, D> MappingRail<D, E>.invoke(block: Rail<E>.() -> Res<V, D>): V`
 - Runs block → gets `Res<V, D>` → unwraps via `orFail { onError(it) }`
-- Exceptions caught → `fail(onException(e))`
+- Exceptions thrown **inside block** caught → `fail(onException(e))`
 - CancellationException rethrown
+- `onError`/`onException` have disjoint roles: `onException` handles only block exceptions; `onError`
+  handles only the typed error. A throwing `onError` is a mapper bug → surfaces as `ErrorMapperException`
+  (domain error in the message), **not** rerouted through `onException`. The `onError` mapping runs
+  outside the block-exception `catch` so the two can't be confused.
 
-**Top-level invoke:** returns `Res<V, E>`, creates own scope.
+**Top-level invoke:** returns `Res<V, E>`, creates own scope. Same disjoint mapper semantics.
 
 ## Validation
 
@@ -235,9 +246,16 @@ Operations:
 - `hasErrors: Boolean`
 - `errors(): List<E>` — defensive copy
 - `toRes(): Res<Unit, List<E>>` — Ok if clean, Fail with error list if not
+- `errorsFramed(): List<FramedError<E>>` — each error paired with its context frames
+- `toResFramed(): Res<Unit, List<FramedError<E>>>` — frame-retaining variant of `toRes()`
+
+The plain `check`/`valueOrNull`/`checkOr`/`toRes` path drops the frames of any `Res` checked into it
+(the error becomes a bare `List<E>`). The `…Framed` read-backs retain them via a lazy sparse
+side-table — see "FramedError" under Error Context Chains.
 
 Top-level entry points:
 - `validation(block: Validator<E>.() -> Unit): Res<Unit, List<E>>`
+- `validationFramed(block: Validator<E>.() -> Unit): Res<Unit, List<FramedError<E>>>` — frame-retaining
 - `Validator.validator<E>(): Validator<E>` — factory for imperative use
 
 ### ValidationMapping<F, E>
@@ -286,6 +304,9 @@ Frames are stored in `Failure.frames: List<Frame>` (default `emptyList()`). Also
 | `.context { msg }` on Ok | No-op, returns `this` |
 | `.mapError { transform }` | Creates new `Failure(newError, existingFrames)` — **preserves frames** |
 | `.map { transform }` on Fail | Passes `Failure` through unchanged — **preserves frames** |
+| `.flatMap { transform }` on Fail | Passes `Failure` through unchanged — **preserves frames** |
+| `.flatten()` on outer Fail | Passes outer `Failure` through — **preserves frames** |
+| `.contextFrame { frame }` on Fail | Appends a pre-built frame — **appends** |
 | `.orElse { transform }` on Fail→Fail | Merges: `Failure(rec.error, original.frames + rec.frames)` — **preserves frames** |
 | `.orElse { transform }` on Fail→Ok | Returns recovery Ok unchanged — frames discarded (Ok has none) |
 | `.recover { transform }` on Fail | Returns Ok — frames discarded (Ok has none) |
@@ -297,6 +318,38 @@ Frames are stored in `Failure.frames: List<Frame>` (default `emptyList()`). Also
 | `ExceptionMappingRail` top-level catch | `Res(Failure(e.error, e.frames))` — transfers frames |
 | `ErrorMappingRail` top-level catch | `Res(Failure(mapError(e.error), e.frames))` — transfers frames |
 | `MappingRail` top-level catch | `Res(Failure(e.error, e.frames))` — transfers frames |
+| Any mapping-rail **exception-caught** path | Caught `Exception` is not a `Failure` → new `Failure` with `emptyList()` — **no frames** (none existed) |
+| `getOrThrow(attachFrames = true)` | Adds each frame to the thrown error as `addSuppressed(FrameTrace(..))` — **attaches** |
+| `getOrThrow(attachFrames = false)` (default) | Throws error untouched — frames **dropped** |
+| `.toResult()` / `.toResult(transform)` | stdlib `Result` has no frame slot — frames **dropped** |
+| `zip(...)` fail-fast | Returns first failing branch's `Failure` unchanged — **preserves frames** |
+| `combine()` / `tryMap` / `tryForEach` | Return first failing element's `Failure` unchanged — **preserves frames** |
+| `zipOrAccumulate(...)` | Error becomes `List<E>` (no per-error slot) — frames **dropped** |
+| `Validator.check / valueOrNull / checkOr` | Add only the error to `List<E>` via `toRes()` — frames **dropped** |
+| `filterFail()` / `partition()` | Extract only `E` — frames **dropped** |
+| `…Framed` accumulators (see below) | Each error paired with its frames in `List<FramedError<E>>` — **retains frames** |
+
+### FramedError: retaining frames when accumulating
+
+The default accumulation paths collapse many failures into one `List<E>`, which has no per-error slot
+for frames, so they drop them (rows above). The opt-in **`FramedError<E>(error, frames)`** carrier
+(`FramedError.kt`) and the `…Framed` siblings retain the per-error trail. Default `List<E>` paths are
+unchanged — no allocation tax on the common (`ensure`-only) validation path.
+
+- `zipOrAccumulateFramed(...)` (arities 2–4) → `Res<R, List<FramedError<E>>>`
+- `Validator.errorsFramed(): List<FramedError<E>>`, `Validator.toResFramed(): Res<Unit, List<FramedError<E>>>`
+- `validationFramed { }: Res<Unit, List<FramedError<E>>>`
+- `Rail` member `Validator<F>.orFailFramed(mapErrors: (List<FramedError<F>>) -> E)` — flush framed errors into a rail error
+- `Iterable.filterFailFramed(): List<FramedError<E>>`, `Iterable.partitionFramed(): Pair<List<V>, List<FramedError<E>>>`
+
+`Validator` keeps a lazily-allocated **sparse** side-table (`frameMap`, `null` until a frame-bearing
+`check()` lands) mapping error index → frames, so `ensure`/`fail`/`addAll` stay allocation-free and
+`errors()`/`toRes()` are byte-for-byte unchanged. Errors from `ensure`/`fail` carry
+`emptyList()` frames; errors from `check`/`valueOrNull`/`checkOr` carry the source `Res`'s frames
+(preserved across the `mapError` variants).
+
+Unlike `Failure.equals` (frames ignored — observability, not domain), `FramedError` is the explicit
+carry-the-frames type, so frames **do** participate in its `equals`/`hashCode` (data-class default).
 
 ### Rendering
 
@@ -318,6 +371,13 @@ fun <V, E, T> Res<V, E>.fold(
 Disambiguated from the standard `fold` by the two-parameter `onFail` lambda.
 
 ## KSP Module: @TraceContext
+
+> **Status: detached from the build, not shipped.** `result-kit-ksp` is excluded from
+> `settings.gradle.kts` `include(...)` and is not published. The code is kept on disk for a future
+> release. The `@TraceContext`/`@TraceMessage`/`@TraceInclude` annotations have moved out of core into
+> `result-kit-ksp/src/main/.../context/TraceAnnotations.kt`, so the core jar carries nothing
+> KSP-related. The reference below describes the shelved processor; re-add `":result-kit-ksp"` to
+> `settings.gradle.kts` to build/work on it.
 
 ### What It Generates
 
@@ -364,9 +424,11 @@ Derived from KSP's `FileLocation`. Uses package-relative path for unambiguous id
 
 `zip(block1, block2, ..., transform)` — fail-fast sequential, arities 2-4. Blocks evaluated in order; short-circuits on first Fail. All blocks are `() -> Res<V, E>`.
 
-`zipOrAccumulate(block1, block2, ..., transform)` — all blocks always evaluated, errors accumulated into `List<E>`. Note: error type changes from `E` to `List<E>`.
+`zipOrAccumulate(block1, block2, ..., transform)` — all blocks always evaluated, errors accumulated into `List<E>`. Note: error type changes from `E` to `List<E>`. Fail-fast `zip` preserves the failing branch's frames; `zipOrAccumulate` drops them (bare `List<E>`).
 
-Both have `callsInPlace` contracts (EXACTLY_ONCE for evaluated blocks, AT_MOST_ONCE for skippable ones and transform).
+`zipOrAccumulateFramed(...)` — frame-retaining variant returning `Res<R, List<FramedError<E>>>`; each failing branch is paired with its frames.
+
+All have `callsInPlace` contracts (EXACTLY_ONCE for evaluated blocks, AT_MOST_ONCE for skippable ones and transform).
 
 ## Composition: Iterable Extensions
 
@@ -375,9 +437,11 @@ On `Iterable<Res<V, E>>`:
 - `anyOk(): Boolean` — true if at least one Ok (false for empty)
 - `anyFail(): Boolean` — true if at least one Fail (false for empty)
 - `filterOk(): List<V>` — collects Ok values
-- `filterFail(): List<E>` — collects Fail errors
-- `combine(): Res<List<V>, E>` — fail-fast collect
-- `partition(): Pair<List<V>, List<E>>` — categorizes all elements
+- `filterFail(): List<E>` — collects Fail errors (frames dropped)
+- `filterFailFramed(): List<FramedError<E>>` — collects Fail errors with their frames
+- `combine(): Res<List<V>, E>` — fail-fast collect (preserves the failing element's frames)
+- `partition(): Pair<List<V>, List<E>>` — categorizes all elements (frames dropped)
+- `partitionFramed(): Pair<List<V>, List<FramedError<E>>>` — categorizes, retaining Fail frames
 
 On `Iterable<V>`:
 - `tryMap(transform: (V) -> Res<U, E>): Res<List<U>, E>` — fail-fast map
@@ -400,6 +464,8 @@ These are critical rules. Violating them will silently break the library.
 5. **Frame ordering is append.** Index 0 = innermost. `.context()` and `withFrame` both append to the end. `contextSummary()` reverses for display. Do not change the ordering convention.
 
 6. **`mapError` preserves frames.** When transforming a Fail error, the new `Failure` must carry the existing frames list. This is how context survives error type changes.
+
+   **6a. Accumulation drops frames; `…Framed` retains them.** Collapsing many failures into one `List<E>` (`zipOrAccumulate`, `Validator`/`validation`, `filterFail`/`partition`) drops per-error frames — `List<E>` has no slot for them. The opt-in `FramedError<E>` carrier and the `…Framed` siblings retain them; the default `List<E>` paths must stay byte-for-byte unchanged (no allocation tax on the frameless common path). `Validator`'s frame side-table must stay lazily-allocated and sparse.
 
 7. **Zero runtime dependencies.** The core module must not depend on anything beyond the Kotlin stdlib. The KSP module depends on `symbol-processing-api` (compile-time only for consumers). Do not add runtime dependencies.
 

@@ -1,3 +1,14 @@
+public abstract interface annotation class tech/codingzen/resultkit/context/TraceContext : java/lang/annotation/Annotation {
+	public abstract fun suffix ()Ljava/lang/String;
+}
+
+public abstract interface annotation class tech/codingzen/resultkit/context/TraceInclude : java/lang/annotation/Annotation {
+}
+
+public abstract interface annotation class tech/codingzen/resultkit/context/TraceMessage : java/lang/annotation/Annotation {
+	public abstract fun value ()Ljava/lang/String;
+}
+
 public final class tech/codingzen/resultkit/ksp/TraceContextProcessorProvider : com/google/devtools/ksp/processing/SymbolProcessorProvider {
 	public fun <init> ()V
 	public fun create (Lcom/google/devtools/ksp/processing/SymbolProcessorEnvironment;)Lcom/google/devtools/ksp/processing/SymbolProcessor;

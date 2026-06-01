@@ -2,6 +2,8 @@
 
 package tech.codingzen.resultkit
 
+import tech.codingzen.resultkit.context.Frame
+
 /**
  * Accumulates validation errors without short-circuiting.
  *
@@ -29,42 +31,69 @@ package tech.codingzen.resultkit
  *
  * **Not thread-safe.** Errors are collected into a plain mutable list.
  * Do not call [fail], [ensure], [check], [checkOr], or [valueOrNull] concurrently from
- * multiple coroutines. For parallel validation, run independent checks with
- * [zipOrAccumulate] instead.
+ * multiple coroutines. To accumulate errors from independent checks without a shared mutable
+ * accumulator, use [zipOrAccumulate] (it evaluates each block sequentially and collects their
+ * errors).
  */
 @RailDsl
 public class Validator<E> @PublishedApi internal constructor() {
     @PublishedApi internal val errors: MutableList<E> = mutableListOf()
 
+    /**
+     * Sparse side-table mapping an error's index in [errors] to the context frames it carried.
+     * `null` until a frame-bearing error actually lands, so the common (frameless) path — `ensure`,
+     * `fail`, `check` on a Res with no frames — pays nothing. Read back via [errorsFramed].
+     */
+    private var frameMap: HashMap<Int, List<Frame>>? = null
+
+    /** Appends a frameless error. The hot path for [ensure]/[fail]/[ensureNotNull]/[addAll]. */
+    @PublishedApi internal fun addError(error: E) {
+        errors.add(error)
+    }
+
+    /** Appends an error, recording [frames] in the sparse side-table when non-empty. */
+    @PublishedApi internal fun addFramed(error: E, frames: List<Frame>) {
+        if (frames.isNotEmpty()) {
+            (frameMap ?: HashMap<Int, List<Frame>>().also { frameMap = it })[errors.size] = frames
+        }
+        errors.add(error)
+    }
+
     /** Adds [error] to the accumulated error list. Does not short-circuit. */
     public fun fail(error: E) {
-        errors.add(error)
+        addError(error)
     }
 
     /** If [condition] is `false`, adds the lazily-evaluated [error]. Does not short-circuit. */
     public inline fun ensure(condition: Boolean, error: () -> E) {
-        if (!condition) errors.add(error())
+        if (!condition) addError(error())
     }
 
     /** If [value] is `null`, adds the lazily-evaluated [error]. Does not short-circuit. */
     public inline fun <V> ensureNotNull(value: V?, error: () -> E) {
-        if (value == null) errors.add(error())
+        if (value == null) addError(error())
     }
 
     /** Adds all [errors] to the accumulated error list. Useful for bridging external validation (Spring, JSR-303). */
     public fun addAll(errors: Iterable<E>) {
-        this.errors.addAll(errors)
+        for (e in errors) addError(e)
     }
 
-    /** If this is Fail, adds its error to the accumulated list. Discards the Ok value. */
+    /**
+     * If this is Fail, adds its error to the accumulated list, retaining any context frames for
+     * [errorsFramed]/[toResFramed]. Discards the Ok value.
+     */
     @Suppress("NOTHING_TO_INLINE")
     public inline fun <V> Res<V, E>.check() {
-        if (inlineValue is Failure) errors.add(inlineValue.error as E)
+        if (inlineValue is Failure) addFramed(inlineValue.error as E, inlineValue.frames)
     }
 
-    /** If this is Fail, maps the error via [mapError] and adds it. Discards the Ok value. */
+    /**
+     * If this is Fail, maps the error via [mapError] and adds it, retaining the source frames across
+     * the map for [errorsFramed]/[toResFramed]. Discards the Ok value.
+     */
     public inline fun <V, F> Res<V, F>.check(mapError: (F) -> E) {
-        if (inlineValue is Failure) errors.add(mapError((inlineValue as Failure).error as F))
+        if (inlineValue is Failure) addFramed(mapError(inlineValue.error as F), inlineValue.frames)
     }
 
     /**
@@ -78,7 +107,7 @@ public class Validator<E> @PublishedApi internal constructor() {
     @Suppress("NOTHING_TO_INLINE")
     public inline fun <V> Res<V, E>.valueOrNull(): V? {
         return if (inlineValue is Failure) {
-            errors.add(inlineValue.error as E)
+            addFramed(inlineValue.error as E, inlineValue.frames)
             null
         } else {
             inlineValue as V
@@ -95,7 +124,7 @@ public class Validator<E> @PublishedApi internal constructor() {
      */
     public inline fun <V, F> Res<V, F>.valueOrNull(mapError: (F) -> E): V? {
         return if (inlineValue is Failure) {
-            errors.add(mapError((inlineValue as Failure).error as F))
+            addFramed(mapError(inlineValue.error as F), inlineValue.frames)
             null
         } else {
             inlineValue as V
@@ -118,7 +147,7 @@ public class Validator<E> @PublishedApi internal constructor() {
     @Suppress("NOTHING_TO_INLINE")
     public inline fun <V> Res<V, E>.checkOr(default: V): V {
         return if (inlineValue is Failure) {
-            errors.add(inlineValue.error as E)
+            addFramed(inlineValue.error as E, inlineValue.frames)
             default
         } else {
             inlineValue as V
@@ -132,7 +161,7 @@ public class Validator<E> @PublishedApi internal constructor() {
      */
     public inline fun <V, F> Res<V, F>.checkOr(default: V, mapError: (F) -> E): V {
         return if (inlineValue is Failure) {
-            errors.add(mapError((inlineValue as Failure).error as F))
+            addFramed(mapError(inlineValue.error as F), inlineValue.frames)
             default
         } else {
             inlineValue as V
@@ -143,13 +172,13 @@ public class Validator<E> @PublishedApi internal constructor() {
     @Suppress("NOTHING_TO_INLINE")
     @JvmName("checkRes")
     public inline fun <V> check(res: Res<V, E>) {
-        if (res.inlineValue is Failure) errors.add(res.inlineValue.error as E)
+        if (res.inlineValue is Failure) addFramed(res.inlineValue.error as E, res.inlineValue.frames)
     }
 
     /** If [res] is Fail, maps the error via [mapError] and adds it. Discards the Ok value. */
     @JvmName("checkResMapped")
     public inline fun <V, F> check(res: Res<V, F>, mapError: (F) -> E) {
-        if (res.inlineValue is Failure) errors.add(mapError((res.inlineValue as Failure).error as F))
+        if (res.inlineValue is Failure) addFramed(mapError(res.inlineValue.error as F), res.inlineValue.frames)
     }
 
     /**
@@ -163,7 +192,7 @@ public class Validator<E> @PublishedApi internal constructor() {
     @JvmName("valueOrNullRes")
     public inline fun <V> valueOrNull(res: Res<V, E>): V? {
         return if (res.inlineValue is Failure) {
-            errors.add(res.inlineValue.error as E)
+            addFramed(res.inlineValue.error as E, res.inlineValue.frames)
             null
         } else {
             res.inlineValue as V
@@ -178,7 +207,7 @@ public class Validator<E> @PublishedApi internal constructor() {
     @JvmName("valueOrNullResMapped")
     public inline fun <V, F> valueOrNull(res: Res<V, F>, mapError: (F) -> E): V? {
         return if (res.inlineValue is Failure) {
-            errors.add(mapError((res.inlineValue as Failure).error as F))
+            addFramed(mapError(res.inlineValue.error as F), res.inlineValue.frames)
             null
         } else {
             res.inlineValue as V
@@ -194,7 +223,7 @@ public class Validator<E> @PublishedApi internal constructor() {
     @JvmName("checkOrRes")
     public inline fun <V> checkOr(default: V, res: Res<V, E>): V {
         return if (res.inlineValue is Failure) {
-            errors.add(res.inlineValue.error as E)
+            addFramed(res.inlineValue.error as E, res.inlineValue.frames)
             default
         } else {
             res.inlineValue as V
@@ -209,7 +238,7 @@ public class Validator<E> @PublishedApi internal constructor() {
     @JvmName("checkOrResMapped")
     public inline fun <V, F> checkOr(default: V, res: Res<V, F>, mapError: (F) -> E): V {
         return if (res.inlineValue is Failure) {
-            errors.add(mapError((res.inlineValue as Failure).error as F))
+            addFramed(mapError(res.inlineValue.error as F), res.inlineValue.frames)
             default
         } else {
             res.inlineValue as V
@@ -223,6 +252,16 @@ public class Validator<E> @PublishedApi internal constructor() {
     public fun errors(): List<E> = errors.toList()
 
     /**
+     * Returns each accumulated error paired with the context frames it carried, as a defensive copy.
+     *
+     * Errors added via [ensure]/[fail]/[ensureNotNull]/[addAll] carry no frames
+     * (`FramedError(error, emptyList())`); errors added via [check]/[valueOrNull]/[checkOr] carry the
+     * frames from the [Res] they were drawn from. Order matches [errors]. See [FramedError].
+     */
+    public fun errorsFramed(): List<FramedError<E>> =
+        errors.mapIndexed { i, e -> FramedError(e, frameMap?.get(i) ?: emptyList()) }
+
+    /**
      * Returns [Res.Ok] if no errors accumulated, or [Res.Fail] with a defensive copy of the error list.
      *
      * The Ok value is [Unit] — [Validator] accumulates errors, it does not produce values.
@@ -230,9 +269,22 @@ public class Validator<E> @PublishedApi internal constructor() {
      *
      * **Note:** Both this method and [errors] allocate a new list. If you need both,
      * call [errors] once and reuse the snapshot.
+     *
+     * The Fail error is a bare `List<E>`, so any frames on checked-in failures are dropped. Use
+     * [toResFramed] to retain each error's frames.
      */
     public fun toRes(): Res<Unit, List<E>> =
         if (errors.isEmpty()) Res.ok(Unit) else Res.failure(errors.toList())
+
+    /**
+     * Frame-retaining variant of [toRes]: [Res.Ok] if clean, or [Res.Fail] with each error paired
+     * with its context frames (see [errorsFramed], [FramedError]).
+     *
+     * The frames ride inside each [FramedError] element, so the outer failure itself carries none —
+     * read them per-error, not via [contextChain][tech.codingzen.resultkit.context.contextChain].
+     */
+    public fun toResFramed(): Res<Unit, List<FramedError<E>>> =
+        if (errors.isEmpty()) Res.ok(Unit) else Res.failure(errorsFramed())
 
     public companion object {
         /**
@@ -256,9 +308,31 @@ public class Validator<E> @PublishedApi internal constructor() {
  * }
  * // result: Res<Unit, List<String>>
  * ```
+ *
+ * The Fail error is a bare `List<E>`, so any frames on checked-in failures are dropped. Use
+ * [validationFramed] to retain each error's frames.
  */
 public inline fun <E> validation(block: Validator<E>.() -> Unit): Res<Unit, List<E>> {
     val v = Validator<E>()
     v.block()
     return v.toRes()
+}
+
+/**
+ * Frame-retaining variant of [validation]: runs [block] and returns [Res.Ok] if no errors
+ * accumulated, or [Res.Fail] with each error paired with its context frames.
+ *
+ * ```
+ * val result: Res<Unit, List<FramedError<String>>> = validationFramed {
+ *     check(parseName(input))     // keeps parseName's context frames
+ *     ensure(age >= 0) { "Negative age" }   // no frames
+ * }
+ * ```
+ *
+ * See [FramedError] and [Validator.toResFramed].
+ */
+public inline fun <E> validationFramed(block: Validator<E>.() -> Unit): Res<Unit, List<FramedError<E>>> {
+    val v = Validator<E>()
+    v.block()
+    return v.toResFramed()
 }

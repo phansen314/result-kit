@@ -569,7 +569,7 @@ class ContextTest {
                 { SourceLocation("X.kt", 10, "foo") },
             )
         val caught = try {
-            res.getOrThrow()
+            res.getOrThrow(attachFrames = true)
             null
         } catch (e: RuntimeException) { e }
         assertNotNull(caught)
@@ -589,7 +589,7 @@ class ContextTest {
             .context { "step1" }
             .context { "step2" }
         val caught = try {
-            res.getOrThrow { IllegalStateException("transformed: $it") }
+            res.getOrThrow(attachFrames = true) { IllegalStateException("transformed: $it") }
             null
         } catch (e: IllegalStateException) { e }
         assertNotNull(caught)
@@ -605,7 +605,7 @@ class ContextTest {
         val err = RuntimeException("boom")
         val res: Res<Int, RuntimeException> = Res.failure(err)
         val caught = try {
-            res.getOrThrow()
+            res.getOrThrow(attachFrames = true)
             null
         } catch (e: RuntimeException) { e }
         assertNotNull(caught)
@@ -657,8 +657,8 @@ class ContextTest {
     }
 
     @Test
-    fun `orFail preserves frames from KSP-style chained context`() {
-        // Simulates what a @TraceContext wrapper produces
+    fun `orFail preserves frames from chained context with location`() {
+        // Mirrors a hand-written traced wrapper: .context() with message + source location
         val res: Res<Int, String> = Res.failure("not found")
             .context(
                 { "UserRepo.findById(id)" },

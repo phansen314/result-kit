@@ -41,14 +41,30 @@ public final class tech/codingzen/resultkit/Failure {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class tech/codingzen/resultkit/FramedError {
+	public fun <init> (Ljava/lang/Object;Ljava/util/List;)V
+	public synthetic fun <init> (Ljava/lang/Object;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/Object;
+	public final fun component2 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/Object;Ljava/util/List;)Ltech/codingzen/resultkit/FramedError;
+	public static synthetic fun copy$default (Ltech/codingzen/resultkit/FramedError;Ljava/lang/Object;Ljava/util/List;ILjava/lang/Object;)Ltech/codingzen/resultkit/FramedError;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Ljava/lang/Object;
+	public final fun getFrames ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class tech/codingzen/resultkit/IterableKt {
 	public static final fun allOk (Ljava/lang/Iterable;)Z
 	public static final fun anyFail (Ljava/lang/Iterable;)Z
 	public static final fun anyOk (Ljava/lang/Iterable;)Z
 	public static final fun combine (Ljava/lang/Iterable;)Ljava/lang/Object;
 	public static final fun filterFail (Ljava/lang/Iterable;)Ljava/util/List;
+	public static final fun filterFailFramed (Ljava/lang/Iterable;)Ljava/util/List;
 	public static final fun filterOk (Ljava/lang/Iterable;)Ljava/util/List;
 	public static final fun partition (Ljava/lang/Iterable;)Lkotlin/Pair;
+	public static final fun partitionFramed (Ljava/lang/Iterable;)Lkotlin/Pair;
 	public static final fun tryForEach (Ljava/lang/Iterable;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public static final fun tryMap (Ljava/lang/Iterable;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 }
@@ -82,6 +98,7 @@ public final class tech/codingzen/resultkit/Rail {
 	public final fun orFail-f9Uky-g (Ljava/lang/Object;)Ljava/lang/Object;
 	public final fun orFailContext-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public final fun orFailContext-9lRxS48 (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
+	public final fun orFailFramed (Ltech/codingzen/resultkit/Validator;Lkotlin/jvm/functions/Function1;)V
 	public final fun validation (Lkotlin/jvm/functions/Function1;)Ltech/codingzen/resultkit/ValidationMapping;
 	public final fun withFrame (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public final fun withFrame (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
@@ -132,8 +149,10 @@ public final class tech/codingzen/resultkit/ResKt {
 	public static final fun fold-9lRxS48 (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public static final fun getOrElse-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public static final fun getOrNull-f9Uky-g (Ljava/lang/Object;)Ljava/lang/Object;
-	public static final fun getOrThrow-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
-	public static final fun getOrThrow-f9Uky-g (Ljava/lang/Object;)Ljava/lang/Object;
+	public static final fun getOrThrow-48CL6Po (Ljava/lang/Object;Z)Ljava/lang/Object;
+	public static synthetic fun getOrThrow-48CL6Po$default (Ljava/lang/Object;ZILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun getOrThrow-9lRxS48 (Ljava/lang/Object;ZLkotlin/jvm/functions/Function1;)Ljava/lang/Object;
+	public static synthetic fun getOrThrow-9lRxS48$default (Ljava/lang/Object;ZLkotlin/jvm/functions/Function1;ILjava/lang/Object;)Ljava/lang/Object;
 	public static final fun map-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public static final fun mapError-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public static final fun onFail-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
@@ -162,6 +181,8 @@ public final class tech/codingzen/resultkit/Validator {
 	public static final field Companion Ltech/codingzen/resultkit/Validator$Companion;
 	public fun <init> ()V
 	public final fun addAll (Ljava/lang/Iterable;)V
+	public final fun addError (Ljava/lang/Object;)V
+	public final fun addFramed (Ljava/lang/Object;Ljava/util/List;)V
 	public final fun check-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)V
 	public final fun check-f9Uky-g (Ljava/lang/Object;)V
 	public final fun checkOr-48CL6Po (Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
@@ -173,10 +194,12 @@ public final class tech/codingzen/resultkit/Validator {
 	public final fun ensure (ZLkotlin/jvm/functions/Function0;)V
 	public final fun ensureNotNull (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)V
 	public final fun errors ()Ljava/util/List;
+	public final fun errorsFramed ()Ljava/util/List;
 	public final fun fail (Ljava/lang/Object;)V
 	public final fun getErrors ()Ljava/util/List;
 	public final fun getHasErrors ()Z
 	public final fun toRes-oAMN6Yg ()Ljava/lang/Object;
+	public final fun toResFramed-oAMN6Yg ()Ljava/lang/Object;
 	public final fun valueOrNull-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public final fun valueOrNull-f9Uky-g (Ljava/lang/Object;)Ljava/lang/Object;
 	public final fun valueOrNullRes (Ljava/lang/Object;)Ljava/lang/Object;
@@ -189,6 +212,7 @@ public final class tech/codingzen/resultkit/Validator$Companion {
 
 public final class tech/codingzen/resultkit/ValidatorKt {
 	public static final fun validation (Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
+	public static final fun validationFramed (Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 }
 
 public final class tech/codingzen/resultkit/ZipKt {
@@ -198,6 +222,9 @@ public final class tech/codingzen/resultkit/ZipKt {
 	public static final fun zipOrAccumulate (Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function4;)Ljava/lang/Object;
 	public static final fun zipOrAccumulate (Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function3;)Ljava/lang/Object;
 	public static final fun zipOrAccumulate (Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;
+	public static final fun zipOrAccumulateFramed (Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function4;)Ljava/lang/Object;
+	public static final fun zipOrAccumulateFramed (Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function3;)Ljava/lang/Object;
+	public static final fun zipOrAccumulateFramed (Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;
 }
 
 public final class tech/codingzen/resultkit/context/ContextExtensionsKt {
@@ -250,16 +277,5 @@ public final class tech/codingzen/resultkit/context/SourceLocation {
 	public final fun getLine ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public abstract interface annotation class tech/codingzen/resultkit/context/TraceContext : java/lang/annotation/Annotation {
-	public abstract fun suffix ()Ljava/lang/String;
-}
-
-public abstract interface annotation class tech/codingzen/resultkit/context/TraceInclude : java/lang/annotation/Annotation {
-}
-
-public abstract interface annotation class tech/codingzen/resultkit/context/TraceMessage : java/lang/annotation/Annotation {
-	public abstract fun value ()Ljava/lang/String;
 }
 

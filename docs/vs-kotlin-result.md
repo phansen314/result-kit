@@ -91,7 +91,7 @@ fun loadUserProfile(id: Int): Res<Profile, AppError> =
         .context { "handling /profile request" }
 ```
 
-Frames survive `mapError`, `orFail`, and the rail short-circuit boundary. There's a KSP module (`@TraceContext`) that auto-generates traced decorators that attach frames to every method of an interface.
+Frames survive `mapError`, `orFail`, and the rail short-circuit boundary.
 
 **kotlin-result** has no equivalent. You'd attach context manually by enriching the error type:
 
@@ -147,7 +147,7 @@ Result-Kit also has `Rail.attempt { ... }` as a convenience that catches `Except
 |---|---|---|
 | Core runtime deps | **zero** | `kotlinx-coroutines-core` (for `binding`) |
 | Multiplatform | JVM only (currently) | full Kotlin Multiplatform (JVM, JS, Native, WASM) |
-| Module count | 2 (`result-kit`, `result-kit-ksp`) | several (`kotlin-result`, `kotlin-result-coroutines`, etc.) |
+| Module count | 1 (`result-kit`) | several (`kotlin-result`, `kotlin-result-coroutines`, etc.) |
 | ABI tracking | `binary-compatibility-validator` plugin | yes |
 
 kotlin-result's coroutine dependency is small and likely already on your classpath, but it's worth knowing. Result-Kit deliberately keeps the core out of the coroutine machinery — `rail { }` works in suspend contexts because it's an `inline` function, not because it suspends internally.
@@ -171,7 +171,6 @@ Choose **Result-Kit** if:
 - Zero runtime dependencies is a hard requirement.
 - You want value-class allocation characteristics on the Ok path.
 - You want a sync-and-suspend DSL with no coroutine dependency.
-- The KSP `@TraceContext` annotation is appealing for service layers.
 - JVM-only is acceptable.
 
 Choose **kotlin-result** if:

@@ -58,13 +58,8 @@ Built on a `Res<V, E>` inline value class (zero allocation on the Ok path) and a
 ```kotlin
 dependencies {
     implementation("tech.codingzen:result-kit:1.1.0")
-
-    // Optional: KSP module for @TraceContext automatic traced-wrapper generation
-    ksp("tech.codingzen:result-kit-ksp:1.1.0")
 }
 ```
-
-The KSP module requires the [KSP Gradle plugin](https://kotlinlang.org/docs/ksp-quickstart.html).
 
 ## Stability
 
@@ -88,7 +83,7 @@ Result-Kit follows [Semantic Versioning](https://semver.org/). From `1.1.0` onwa
 - Adding new factory methods, extension functions, or overloads.
 - Improving error messages or KDoc.
 - Optimizing internal implementation while preserving observable behavior.
-- Changing the contents of generated KSP wrappers, as long as they still implement the interface contract.
+- Optimizing internal implementation while preserving observable behavior.
 
 The library is JVM-only at present. Kotlin Multiplatform support is a future possibility but not committed.
 
@@ -146,19 +141,6 @@ rail {
 // On failure: "processing order 42 → fetching user → DbError(connection refused)"
 ```
 
-### KSP Traced Wrappers
-
-Auto-generate context-attaching decorators for your repository interfaces:
-
-```kotlin
-@TraceContext
-interface UserRepository {
-    fun findById(@TraceInclude id: Int): Res<User, DbError>
-}
-// Generates UserRepositoryTraced — every Res-returning method
-// wrapped with .context(message, sourceLocation) automatically
-```
-
 ## Documentation
 
 | Document | Audience | Contents |
@@ -196,7 +178,7 @@ A compact list of every public symbol. The [Guide](docs/guide.md) walks through 
 | `Res<V, E>.toFailIf(predicate, transform)` | Convert an Ok to Fail when the predicate matches. |
 | `getOrNull()` / `errorOrNull()` | Accessors; null on the wrong branch. |
 | `getOrElse { default }` | Ok value or compute a default from the error. |
-| `getOrThrow()` / `getOrThrow { transform }` | Throw the error directly (`E : Throwable`) or via a transform. Any attached context frames are added to the throwable as suppressed `FrameTrace` entries so the breadcrumb chain appears in stack-trace dumps. |
+| `getOrThrow(attachFrames = false)` / `getOrThrow(attachFrames = false) { transform }` | Throw the error directly (`E : Throwable`) or via a transform. Pass `attachFrames = true` to add context frames as suppressed `FrameTrace` entries so the breadcrumb chain appears in stack-trace dumps — opt-in because it mutates the thrown error in place (unsafe for shared/`object` errors). |
 | `errorOrThrow()` | Returns the error or throws ISE on Ok (test helper). |
 | `fold(onOk, onFail)` | Exhaustive match. |
 | `fold(onOk, onFail = (E, List<Frame>) -> T)` | Frame-aware fold. |
@@ -230,6 +212,8 @@ A compact list of every public symbol. The [Guide](docs/guide.md) walks through 
 
 All four scopes are reusable values. Each invokes one way at the top level (returns `Res`) and another inside `rail {}` (unwrapped, short-circuiting).
 
+> ⚠️ **Context-dependent return type.** The *same* scope value returns `V` (short-circuiting) inside a `rail {}` block but `Res<V, E>` outside one — the return type depends on the call's lexical context, not its syntax. The compiler always resolves the correct overload (a mismatch is a compile error, never a silent runtime bug), but when reading code, check whether a call sits inside a `rail {}` to know what it yields.
+
 | Scope | Constructor | Inside `rail {}` |
 |---|---|---|
 | `ExceptionMappingRail<E>` | `catching { (Exception) -> E }` | `io { block }` returns `V` |
@@ -246,22 +230,26 @@ Companion factories — `Rail.catching`, `Rail.mapping`, `Rail.catchingMapping`,
 | `validation { Validator<E>.() -> Unit }` | Top-level entry. Returns `Res<Unit, List<E>>`. |
 | `Validator.validator<E>()` | Imperative factory — accumulate errors yourself, then call `.toRes()`. |
 | `validator.fail(error)` / `ensure` / `ensureNotNull` | Add errors. **Do not short-circuit.** |
-| `validator.check(res)` / `check(res) { mapError }` | Drain a `Res` into the accumulator (drops the value). |
+| `validator.check(res)` / `check(res) { mapError }` | Drain a `Res` into the accumulator (drops the value; frames retained for the `…Framed` read-backs). |
 | `validator.valueOrNull(res)` / `valueOrNull(res) { mapError }` | Drain into the accumulator and return the Ok value or `null` on Fail. The `OrNull` suffix is a deliberate footgun warning — dependent code must guard for null. |
 | `validator.checkOr(default, res)` / `checkOr(default, res) { mapError }` | Like `valueOrNull` but returns [default] on Fail — non-null variant for when you have a sane fallback. |
-| `validator.toRes()` | Ok if no errors, Fail with the list otherwise. |
+| `validator.toRes()` | Ok if no errors, Fail with the list otherwise. Plain `List<E>` — **frames dropped.** |
+| `validator.toResFramed()` / `errorsFramed()` / `validationFramed { }` | Frame-retaining variants — each error paired with its frames as `List<FramedError<E>>`. |
 | `Validator<F>.orFail { (List<F>) -> E }` | Inside `rail {}`: flush an imperative validator into the rail. |
+| `Validator<F>.orFailFramed { (List<FramedError<F>>) -> E }` | Inside `rail {}`: flush a validator, passing each error with its frames. |
 
 ### Composition
 
 | Symbol | Description |
 |---|---|
-| `zip(b1, b2, …, transform)` | Fail-fast sequential composition (arities 2–4). |
-| `zipOrAccumulate(b1, b2, …, transform)` | All blocks run; errors accumulated into `List<E>`. |
+| `zip(b1, b2, …, transform)` | Fail-fast sequential composition (arities 2–4). Preserves the failing branch's frames. |
+| `zipOrAccumulate(b1, b2, …, transform)` | All blocks run; errors accumulated into `List<E>`. Frames dropped. |
+| `zipOrAccumulateFramed(b1, b2, …, transform)` | As `zipOrAccumulate`, into `List<FramedError<E>>` — frames retained. |
 | `Iterable<Res<V, E>>.allOk()` / `anyOk()` / `anyFail()` | Boolean queries. |
-| `Iterable<Res<V, E>>.filterOk()` / `filterFail()` | Extract values or errors. |
-| `Iterable<Res<V, E>>.combine()` | Fail-fast `Res<List<V>, E>`. |
-| `Iterable<Res<V, E>>.partition()` | `Pair<List<V>, List<E>>`. |
+| `Iterable<Res<V, E>>.filterOk()` / `filterFail()` | Extract values or errors (`filterFail` drops frames). |
+| `Iterable<Res<V, E>>.filterFailFramed()` | Extract errors with their frames as `List<FramedError<E>>`. |
+| `Iterable<Res<V, E>>.combine()` | Fail-fast `Res<List<V>, E>` (preserves the failing element's frames). |
+| `Iterable<Res<V, E>>.partition()` / `partitionFramed()` | `Pair<List<V>, List<E>>` (frames dropped) / `… List<FramedError<E>>` (retained). |
 | `Iterable<V>.tryMap { (V) -> Res<U, E> }` | Fail-fast map. |
 | `Iterable<V>.tryForEach { (V) -> Res<*, E> }` | Fail-fast iteration. |
 
@@ -273,6 +261,9 @@ Companion factories — `Rail.catching`, `Rail.mapping`, `Rail.catchingMapping`,
 | `Res<V, E>.context { message }` / `context(message, location)` | Append a frame to a Fail; no-op on Ok. |
 | `Res<V, E>.contextChain()` / `renderContext()` / `contextSummary()` / `contextMap()` | Read frames at the reporting boundary. |
 | `List<Frame>.findAttachment<T>()` | Find first attachment of a given type. |
+| `FramedError(error, frames)` | An error paired with its frames — produced by the `…Framed` accumulators (`zipOrAccumulateFramed`, `validationFramed`, `toResFramed`, `filterFailFramed`, `partitionFramed`). |
+
+For a single `Res`, an error and its frames already travel together — read them with `contextChain()`. The pairing only needs an explicit `FramedError` carrier when an **accumulator** collapses many failures into one `List<…>`: there `List<E>` has no per-error slot for frames, so the default paths drop them and the `…Framed` variants return `List<FramedError<E>>` instead. The `List<E>` paths are unchanged — no cost on the common (`ensure`-only) validation path.
 
 ### Top-level usage (outside `rail {}` blocks)
 
@@ -294,22 +285,10 @@ fun loadConfigOnly(): Res<String, AppError> =
 
 The compiler picks the right invoke based on the receiver. A return-type mismatch is a compile error, not a silent runtime bug.
 
-### TraceContext annotations (result-kit-ksp)
-
-The KSP module generates context-attaching decorators for interfaces.
-
-| Annotation | Target | Description |
-|---|---|---|
-| `@TraceContext(suffix = "Traced")` | interface | Generates `{Interface}Traced(delegate: Interface)`. Every `Res`-returning method is wrapped with `.context(message, location)`. Non-`Res` methods are delegated as-is. |
-| `@TraceMessage("custom {param}")` | method | Replaces the auto-generated message. `{paramName}` interpolates the parameter value. |
-| `@TraceInclude` | parameter | Opts the parameter's value into the auto-generated message. Without it, only the parameter name is emitted (secure-by-default — no PII leakage). |
-
-`SourceLocation` is derived from the interface declaration site using a package-relative path. `suspend`, type parameters with bounds, and all parameter types are preserved on the generated wrapper.
-
 ## Building
 
 ```bash
-./gradlew build    # compile + test (all modules)
+./gradlew build    # compile + test
 ./gradlew test     # tests only
 ```
 

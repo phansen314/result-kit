@@ -110,7 +110,7 @@ fun loadUserProfile(id: Int): Res<Profile, AppError> =
         .context { "handling /profile request" }
 ```
 
-On failure, the frames are accessible via `contextChain()`, `renderContext()`, `contextSummary()`, etc. They survive `mapError`, `orElse Fail→Fail`, and the rail short-circuit boundary. There's a KSP module (`@TraceContext`) that auto-generates traced decorators for interfaces.
+On failure, the frames are accessible via `contextChain()`, `renderContext()`, `contextSummary()`, etc. They survive `mapError`, `orElse Fail→Fail`, and the rail short-circuit boundary.
 
 **Arrow** has no equivalent first-class concept. You'd attach context manually via `mapError`:
 
@@ -157,7 +157,7 @@ Result-Kit caps the fixed-arity `zip` at 4 (Arrow at 9). For >4 validators you r
 | | Result-Kit | Arrow |
 |---|---|---|
 | Runtime deps | **zero** | `arrow-core` plus what you import |
-| Module count | 2 (`result-kit`, `result-kit-ksp`) | many (`arrow-core`, `arrow-fx-coroutines`, `arrow-optics`, `arrow-resilience`, ...) |
+| Module count | 1 (`result-kit`) | many (`arrow-core`, `arrow-fx-coroutines`, `arrow-optics`, `arrow-resilience`, ...) |
 | Multiplatform | JVM only (currently) | full Kotlin Multiplatform |
 | ABI tracking | `binary-compatibility-validator` plugin | yes (Arrow ecosystem-wide) |
 
@@ -178,7 +178,7 @@ Result-Kit provides:
 - `Res<V, E>` (typed errors)
 - `rail { }` (short-circuit DSL)
 - Mapping scopes (`catching`, `mapping`, `catchingMapping`, `validation`)
-- Context frames (`Frame`, `SourceLocation`, KSP `@TraceContext`)
+- Context frames (`Frame`, `SourceLocation`)
 - Iterable extensions, `zip`, interop with `kotlin.Result`
 
 If you only need typed errors, Result-Kit is the focused choice. If you're already adopting FP patterns broadly, Arrow gives you a consistent ecosystem.

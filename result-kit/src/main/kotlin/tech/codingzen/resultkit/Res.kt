@@ -259,32 +259,48 @@ public inline fun <V, E> Res<V, E>.onFail(action: (E) -> Unit): Res<V, E> {
  *
  * Requires `E : Throwable`. For non-throwable error types, use [getOrThrow] with a transform.
  *
- * Any context [Frame]s attached to the failure are added to the thrown error as
- * [Throwable.addSuppressed] [FrameTrace] entries so the breadcrumb chain appears in standard
- * stack-trace dumps.
+ * By default the thrown error is left untouched. Pass [attachFrames] = `true` to add any context
+ * [Frame]s to the thrown error as [Throwable.addSuppressed] [FrameTrace] entries, so the breadcrumb
+ * chain appears in standard stack-trace dumps.
+ *
+ * **[attachFrames] mutates the thrown error in place** and is not idempotent. Because the error
+ * instance may be shared — an `object` error, or one reused across results — repeated throws, or
+ * throws of the same error from different results, can accumulate or intermix suppressed entries.
+ * Enable it only for freshly-constructed, single-use errors.
  */
-@Suppress("NOTHING_TO_INLINE")
-public inline fun <V, E : Throwable> Res<V, E>.getOrThrow(): V {
+public fun <V, E : Throwable> Res<V, E>.getOrThrow(attachFrames: Boolean = false): V {
     if (inlineValue !is Failure) return inlineValue as V
     val err = inlineValue.error as E
-    for (f in inlineValue.frames) err.addSuppressed(FrameTrace(f))
+    if (attachFrames) {
+        val frames = inlineValue.frames
+        for (i in frames.indices) err.addSuppressed(FrameTrace(frames[i]))
+    }
     throw err
 }
 
 /**
  * Returns the Ok value, or throws the result of applying [transform] to the Fail error.
  *
- * Any context [Frame]s attached to the failure are added to the thrown error as
- * [Throwable.addSuppressed] [FrameTrace] entries so the breadcrumb chain appears in standard
- * stack-trace dumps.
+ * By default the thrown error is left untouched. Pass [attachFrames] = `true` to add any context
+ * [Frame]s to the thrown error as [Throwable.addSuppressed] [FrameTrace] entries, so the breadcrumb
+ * chain appears in standard stack-trace dumps. See the no-arg [getOrThrow] for the in-place
+ * mutation caveat — though when [transform] builds a fresh throwable per call (the common case),
+ * attaching is safe.
  *
+ * @param attachFrames whether to attach context frames to the thrown throwable (default `false`).
  * @param transform converts the failure error into a [Throwable] to throw.
  */
-public inline fun <V, E> Res<V, E>.getOrThrow(transform: (E) -> Throwable): V {
+public inline fun <V, E> Res<V, E>.getOrThrow(
+    attachFrames: Boolean = false,
+    transform: (E) -> Throwable,
+): V {
     contract { callsInPlace(transform, InvocationKind.AT_MOST_ONCE) }
     if (inlineValue !is Failure) return inlineValue as V
     val thrown = transform(inlineValue.error as E)
-    for (f in inlineValue.frames) thrown.addSuppressed(FrameTrace(f))
+    if (attachFrames) {
+        val frames = inlineValue.frames
+        for (i in frames.indices) thrown.addSuppressed(FrameTrace(frames[i]))
+    }
     throw thrown
 }
 

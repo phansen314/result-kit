@@ -163,30 +163,33 @@ class MappingRailTest {
     }
 
     @Test
-    fun `top-level invoke onError throw falls into Exception catch and maps via onException`() {
+    fun `top-level invoke onError throw surfaces as ErrorMapperException`() {
         val httpRail = MappingRail<Int, String>(
             onError = { throw IllegalStateException("mapper broke") },
             onException = { "Exception: ${it.message}" },
         )
-        // onError throws inside mapError {}, falls into catch(Exception), gets mapped by onException
-        val result = httpRail { Res.failure(404) }
-        assertTrue(result.isFail)
-        assertEquals("Exception: mapper broke", result.errorOrThrow())
+        // A throwing onError is a mapper bug, not a block exception — it must NOT be rerouted
+        // through onException. It surfaces as ErrorMapperException carrying the domain error.
+        val ex = assertFailsWith<ErrorMapperException> {
+            val unused: Res<Int, String> = httpRail { Res.failure(404) }
+        }
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("mapper broke", ex.cause!!.message)
+        assertTrue(ex.originalException.message!!.contains("404"))
     }
 
     @Test
-    fun `top-level invoke ErrorMapperException when both onError and onException throw`() {
+    fun `top-level invoke onError throw does not consult onException`() {
         val httpRail = MappingRail<Int, String>(
             onError = { throw IllegalStateException("onError broke") },
-            onException = { throw IllegalArgumentException("onException broke") },
+            onException = { error("onException must not be called when onError throws") },
         )
         val ex = assertFailsWith<ErrorMapperException> {
             httpRail { Res.failure(404) }
         }
-        assertIs<IllegalArgumentException>(ex.cause)
-        assertEquals("onException broke", ex.cause!!.message)
-        assertIs<IllegalStateException>(ex.originalException)
-        assertEquals("onError broke", ex.originalException.message)
+        // cause is the onError throw itself; onException was never consulted.
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("onError broke", ex.cause!!.message)
     }
 
     @Test
@@ -353,34 +356,36 @@ class MappingRailTest {
     }
 
     @Test
-    fun `member extension onError throw falls into Exception catch and maps via onException`() {
-        val result = rail<Int, String> {
-            val http = catchingMapping<Int>(
-                onError = { throw IllegalStateException("mapper broke") },
-                onException = { "Exception: ${it.message}" },
-            )
-            http { Res.failure(404) }
-        }
-        // onError throws inside orFail {}, falls into catch(Exception), gets mapped by onException via fail()
-        assertTrue(result.isFail)
-        assertEquals("Exception: mapper broke", result.errorOrThrow())
-    }
-
-    @Test
-    fun `member extension ErrorMapperException when both onError and onException throw`() {
+    fun `member extension onError throw surfaces as ErrorMapperException`() {
+        // A throwing onError escapes the rail{} as ErrorMapperException — not rerouted to
+        // onException, and not swallowed as a Fail.
         val ex = assertFailsWith<ErrorMapperException> {
             rail<Int, String> {
                 val http = catchingMapping<Int>(
-                    onError = { throw IllegalStateException("onError broke") },
-                    onException = { throw IllegalArgumentException("onException broke") },
+                    onError = { throw IllegalStateException("mapper broke") },
+                    onException = { "Exception: ${it.message}" },
                 )
                 http { Res.failure(404) }
             }
         }
-        assertIs<IllegalArgumentException>(ex.cause)
-        assertEquals("onException broke", ex.cause!!.message)
-        assertIs<IllegalStateException>(ex.originalException)
-        assertEquals("onError broke", ex.originalException.message)
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("mapper broke", ex.cause!!.message)
+        assertTrue(ex.originalException.message!!.contains("404"))
+    }
+
+    @Test
+    fun `member extension onError throw does not consult onException`() {
+        val ex = assertFailsWith<ErrorMapperException> {
+            rail<Int, String> {
+                val http = catchingMapping<Int>(
+                    onError = { throw IllegalStateException("onError broke") },
+                    onException = { error("onException must not be called when onError throws") },
+                )
+                http { Res.failure(404) }
+            }
+        }
+        assertIs<IllegalStateException>(ex.cause)
+        assertEquals("onError broke", ex.cause!!.message)
     }
 
     // -- combined scenarios --

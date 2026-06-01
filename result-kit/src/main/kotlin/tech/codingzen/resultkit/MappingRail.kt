@@ -49,24 +49,41 @@ public class MappingRail<in D, E>(
  *
  * Inside a [rail] block, the member extension [Rail.invoke] takes precedence and
  * returns the unwrapped value directly instead.
+ *
+ * [onException] handles only exceptions thrown *inside* [block]; [onError] handles only the typed
+ * [Res] error. A throwing [onError] is a mapper bug, not an unexpected runtime exception — it
+ * surfaces as [ErrorMapperException] (with the domain error in the message) rather than being
+ * rerouted through [onException].
  */
 public inline operator fun <V, D, E> MappingRail<D, E>.invoke(
     block: Rail<E>.() -> Res<V, D>
 ): Res<V, E> {
     val scope = Rail<E>()
-    return try {
-        scope.block().mapError { onError(it) }
+    val res: Res<V, D> = try {
+        scope.block()
     } catch (e: FailException) {
         if (e.scope !== scope) throw e
+        // fail() inside block already produced an E — return it directly, no onError mapping.
         @Suppress("UNCHECKED_CAST")
-        Res(Failure(e.error as E, e.frames))
+        return Res(Failure(e.error as E, e.frames))
     // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
     } catch (e: kotlin.coroutines.cancellation.CancellationException) {
         throw e
     } catch (e: Exception) {
-        try { Res.failure(onException(e)) } catch (me: Exception) {
+        // Genuine exception inside block → onException (wrap if onException itself throws).
+        try { return Res.failure(onException(e)) } catch (me: Exception) {
             if (me is kotlin.coroutines.cancellation.CancellationException) throw me
             throw ErrorMapperException(e, me)
+        }
+    }
+    // onError mapping runs OUTSIDE the block-exception catch, so a throwing onError surfaces as
+    // ErrorMapperException instead of being misrouted through onException (which would discard D).
+    return res.mapError { d ->
+        try { onError(d) } catch (me: Exception) {
+            if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+            throw ErrorMapperException(
+                IllegalStateException("onError threw while mapping domain error: $d"), me,
+            )
         }
     }
 }
