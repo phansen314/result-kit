@@ -251,6 +251,54 @@ class ErrorMappingRailTest {
     }
 
     @Test
+    fun `in-rail invoke wraps throwing mapError in ErrorMapperException naming domain error`() {
+        val ex = assertFailsWith<ErrorMapperException> {
+            rail<Int, String> {
+                val http = mapping<Int> { code -> throw RuntimeException("mapper boom $code") }
+                http(Res.failure(404))
+                @Suppress("UNREACHABLE_CODE")
+                0
+            }
+        }
+        assertTrue("404" in ex.message!!, "message should name domain error: ${ex.message}")
+        assertTrue("FailException" !in ex.message!!, "message must not leak FailException: ${ex.message}")
+        assertEquals("mapper boom 404", ex.cause?.message)
+        assertTrue(ex.suppressed.none { it::class.simpleName == "FailException" })
+    }
+
+    @Test
+    fun `in-rail orFail(mapping) wraps throwing mapError in ErrorMapperException naming domain error`() {
+        val ex = assertFailsWith<ErrorMapperException> {
+            rail<Int, String> {
+                val http = mapping<Int> { code -> throw RuntimeException("mapper boom $code") }
+                Res.failure(404).orFail(http)
+            }
+        }
+        assertTrue("404" in ex.message!!, "message should name domain error: ${ex.message}")
+        assertTrue("FailException" !in ex.message!!, "message must not leak FailException: ${ex.message}")
+        assertEquals("mapper boom 404", ex.cause?.message)
+    }
+
+    @Test
+    fun `top-level invoke wraps throwing mapError in ErrorMapperException naming domain error`() {
+        val http = Rail.mapping<Int, String> { code -> throw RuntimeException("mapper boom $code") }
+        val ex = assertFailsWith<ErrorMapperException> {
+            http {
+                Res.failure(404).orFail()
+                @Suppress("UNREACHABLE_CODE")
+                0
+            }
+        }
+        // message names the domain error (404), NOT the internal FailException type
+        assertTrue("404" in ex.message!!, "message should name domain error: ${ex.message}")
+        assertTrue("FailException" !in ex.message!!, "message must not leak FailException: ${ex.message}")
+        // cause is the mapper's own exception
+        assertEquals("mapper boom 404", ex.cause?.message)
+        // no internal FailException leaked into the suppressed chain
+        assertTrue(ex.suppressed.none { it::class.simpleName == "FailException" })
+    }
+
+    @Test
     fun `top-level invoke scope isolation — nested FailException propagates`() {
         val outer = Rail.mapping<String, String> { "outer: $it" }
         val inner = Rail.mapping<Int, String> { "inner: $it" }

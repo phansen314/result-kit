@@ -51,7 +51,9 @@ public inline operator fun <V, D, E> ErrorMappingRail<D, E>.invoke(
         if (e.scope !== scope) throw e
         try { Res(Failure(mapError(e.error as D), e.frames)) } catch (me: Exception) {
             if (me is kotlin.coroutines.cancellation.CancellationException) throw me
-            throw ErrorMapperException(e, me)
+            throw ErrorMapperException(
+                IllegalStateException("mapError threw while mapping domain error: ${e.error}"), me,
+            )
         }
     }
 }

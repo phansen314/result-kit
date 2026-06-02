@@ -44,11 +44,13 @@ public class Rail<E> @PublishedApi internal constructor() {
     /**
      * Unwraps the Ok value, or maps the error via [mapping] and short-circuits this rail.
      *
-     * Equivalent to `orFail { mapping.mapError(it) }` but allows reusing an [ErrorMappingRail]
-     * across multiple call sites.
+     * Allows reusing an [ErrorMappingRail] across multiple call sites. Delegates to
+     * [ErrorMappingRail.invoke], so a throwing `mapError` surfaces as [ErrorMapperException]
+     * (naming the domain error) — consistent with the top-level and [MappingRail] behavior.
      */
+    @Suppress("NOTHING_TO_INLINE")
     public inline fun <V, F> Res<V, F>.orFail(mapping: ErrorMappingRail<F, @UnsafeVariance E>): V =
-        orFail { mapping.mapError(it) }
+        mapping(this)
 
     /** Short-circuits this rail with [error] if [condition] is `false`. Analogous to [require]. */
     public inline fun ensure(condition: Boolean, error: () -> E) {
@@ -113,7 +115,14 @@ public class Rail<E> @PublishedApi internal constructor() {
      */
     @Suppress("NOTHING_TO_INLINE")
     public inline operator fun <V, D> ErrorMappingRail<D, @UnsafeVariance E>.invoke(res: Res<V, D>): V =
-        res.orFail { mapError(it) }
+        res.orFail { d ->
+            try { mapError(d) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(
+                    IllegalStateException("mapError threw while mapping domain error: $d"), me,
+                )
+            }
+        }
 
     /**
      * Runs [block], catches exceptions via [MappingRail.onException], then unwraps the

@@ -15,7 +15,9 @@ No linter configured. Code quality is enforced by `explicitApi()` (all public AP
 
 ## Project Structure
 
-Multi-module Gradle project (`rootProject.name = "result-kit-core"`):
+Gradle project (`rootProject.name = "result-kit"`). The shipped build is effectively single-module:
+only `:result-kit` is in `settings.gradle.kts` `include(...)`. The `result-kit-ksp` module lives
+on disk but is detached from the build (see "KSP Module" below).
 
 ```
 result-kit/          — core library (zero runtime dependencies)
@@ -119,7 +121,7 @@ Inside `rail {}`, the receiver `Rail<E>` provides:
 - `fail(e: E): Nothing` — throws `FailException(error=e, scope=this, frames=emptyList())`
 - `Res<V, E>.orFail(): V` — unwrap Ok or short-circuit with Fail error. Preserves frames from the Failure.
 - `Res<V, F>.orFail(mapError: (F) -> E): V` — unwrap or map error + short-circuit. Preserves frames.
-- `Res<V, F>.orFail(mapping: ErrorMappingRail<F, E>): V` — delegates to `orFail { mapping.mapError(it) }`
+- `Res<V, F>.orFail(mapping: ErrorMappingRail<F, E>): V` — delegates to `mapping(this)` (the in-rail invoke); a throwing `mapError` is wrapped in `ErrorMapperException`
 - `ensure(condition, error: () -> E)` — short-circuits if false
 - `ensureNotNull(value: V?, error: () -> E): V` — short-circuits if null
 
@@ -195,13 +197,18 @@ Maps typed errors from domain `D` to `E`. Does NOT catch exceptions.
 Constructor: `ErrorMappingRail(mapError: (D) -> E)`
 
 **Member extension (inside rail):** `operator fun <V, D> ErrorMappingRail<D, E>.invoke(res: Res<V, D>): V`
-- Delegates to `res.orFail { mapError(it) }`
+- Unwraps Ok or maps the error via `mapError` and short-circuits.
+- A throwing `mapError` is wrapped: `ErrorMapperException(IllegalStateException("mapError threw while mapping domain error: $d"), me)`, CancellationException rethrown.
 
 **Alternative inside rail:** `Res<V, F>.orFail(mapping: ErrorMappingRail<F, E>): V`
-- Preferred pattern — reads consistently with `orFail()` and `orFail { }`
+- Preferred pattern — reads consistently with `orFail()` and `orFail { }`.
+- Delegates to `mapping(this)` (the member-extension invoke), so it shares the same throwing-`mapError` wrapping.
 
 **Top-level invoke:** `operator fun <V, D, E> ErrorMappingRail<D, E>.invoke(block: Rail<D>.() -> V): Res<V, E>`
 - Creates own Rail<D> scope, catches FailException, maps error via mapError → `Res(Failure(mapError(e.error as D), e.frames))`
+- A throwing `mapError` is wrapped the same way → `ErrorMapperException`.
+
+**Throwing-`mapError` consistency:** all three entry points (top-level invoke, in-rail invoke, `orFail(mapping)`) wrap a throwing `mapError` in `ErrorMapperException` whose `originalException` is an `IllegalStateException` naming the domain error — never the internal `FailException`. This matches `MappingRail`'s `onError` handling. The low-level hand-rolled `orFail { mapError(it) }` form does **not** wrap — it propagates the mapper exception raw. Rule: named scope = wrapped, hand-rolled `orFail { }` = raw.
 
 ### MappingRail<D, E>
 
