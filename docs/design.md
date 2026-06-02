@@ -42,15 +42,21 @@ The `rail {}` DSL achieves short-circuit semantics by throwing and catching an i
 @PublishedApi
 internal class FailException(
     val error: Any?,
-    val scope: Rail<*>
-) : Throwable(null, null, true, false)  // suppressStackTrace = false, writableStackTrace = false
+    val scope: Rail<*>,
+    val frames: List<Frame> = emptyList(),
+) : Throwable("result-kit: FailException escaped a rail{} block …") {
+    override fun fillInStackTrace(): Throwable =
+        if (DEBUG_STACK_TRACE) super.fillInStackTrace() else this
+}
 ```
 
 Key details:
 
 - **Extends `Throwable`, not `Exception`.** This is critical. Inside `rail {}`, users create `catching` scopes that catch `Exception`. If `FailException` extended `Exception`, those scopes would intercept the control-flow exception and break the railway. By extending `Throwable` directly, `catch(Exception)` blocks never see it.
 
-- **Stack trace is suppressed.** The `Throwable` constructor is called with `writableStackTrace = false`, so no stack trace is allocated. This exception is purely for control flow — it's caught at the `rail {}` boundary and never exposed to callers. Suppressing the stack trace makes it essentially free.
+- **Stack trace is suppressed by default.** `fillInStackTrace()` is overridden to return `this`, so no stack trace is allocated on the control-flow hot path — the exception is caught at the `rail {}` boundary and never exposed to callers. When `-Dresultkit.debug=true` is set on the JVM, the override delegates to `super.fillInStackTrace()` so a stray `FailException` (e.g. one leaking past a `catch(Throwable)` interceptor) can be traced to its origin.
+
+- **Carries the context frames.** The short-circuiting failure's `frames` ride along on the exception so the `rail {}` boundary can transfer them into the resulting `Failure`.
 
 - **Carries a scope reference.** Each `FailException` stores a reference to the `Rail` instance that created it. The `rail {}` boundary checks `e.scope === this` before catching — if the exception came from a nested inner `rail {}`, it propagates upward instead of being caught by the wrong scope.
 

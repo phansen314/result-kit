@@ -345,9 +345,9 @@ public inline fun <V, E> Res<V, E>.toFailIf(
         callsInPlace(predicate, InvocationKind.AT_MOST_ONCE)
         callsInPlace(transform, InvocationKind.AT_MOST_ONCE)
     }
-    return if (inlineValue is Failure) this
-    else if (predicate(inlineValue as V)) Res.failure(transform(inlineValue as V))
-    else this
+    if (inlineValue is Failure) return this
+    val value = inlineValue as V
+    return if (predicate(value)) Res.failure(transform(value)) else this
 }
 
 // -- Transformations --

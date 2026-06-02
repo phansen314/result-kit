@@ -26,9 +26,11 @@ import kotlin.contracts.contract
  *         .context { "loading user id=$id" }
  * ```
  */
+@OptIn(ExperimentalContracts::class)
 public inline fun <V, E> Res<V, E>.context(
     message: () -> String,
 ): Res<V, E> {
+    contract { callsInPlace(message, InvocationKind.AT_MOST_ONCE) }
     val underlying = inlineValue
     if (underlying !is Failure) return this
     return Res(
@@ -53,10 +55,15 @@ public inline fun <V, E> Res<V, E>.context(
  *         )
  * ```
  */
+@OptIn(ExperimentalContracts::class)
 public inline fun <V, E> Res<V, E>.context(
     message: () -> String,
     location: () -> SourceLocation,
 ): Res<V, E> {
+    contract {
+        callsInPlace(message, InvocationKind.AT_MOST_ONCE)
+        callsInPlace(location, InvocationKind.AT_MOST_ONCE)
+    }
     val underlying = inlineValue
     if (underlying !is Failure) return this
     return Res(
@@ -71,9 +78,11 @@ public inline fun <V, E> Res<V, E>.context(
  * Attaches a context frame (message + optional attachment + optional location) to a Fail result.
  * No-op on Ok. The [frame] lambda is only invoked when this result is Fail.
  */
+@OptIn(ExperimentalContracts::class)
 public inline fun <V, E> Res<V, E>.contextFrame(
     frame: () -> Frame,
 ): Res<V, E> {
+    contract { callsInPlace(frame, InvocationKind.AT_MOST_ONCE) }
     val underlying = inlineValue
     if (underlying !is Failure) return this
     return Res(

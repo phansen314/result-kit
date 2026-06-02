@@ -177,7 +177,7 @@ Arrow provides:
 Result-Kit provides:
 - `Res<V, E>` (typed errors)
 - `rail { }` (short-circuit DSL)
-- Mapping scopes (`catching`, `mapping`, `catchingMapping`, `validation`)
+- Mapping scopes (`catching`, `mapping`, `catchingMapping`)
 - Context frames (`Frame`, `SourceLocation`)
 - Iterable extensions, `zip`, interop with `kotlin.Result`
 

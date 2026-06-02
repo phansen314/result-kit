@@ -270,10 +270,10 @@ fun register(req: Request, validator: jakarta.validation.Validator): Res<User, A
 
 // Libraries that THROW with all violations (Valiktor) — wrap in catching:
 fun register(req: Request): Res<User, AppError> = rail {
-    val validate = catching { e ->
+    val toError = catching { e ->
         AppError.Validation((e as ConstraintViolationException).constraintViolations.map { it.property })
     }
-    validate { validate(req) { validate(Request::email).isEmail() } }
+    toError { validate(req) { validate(Request::email).isEmail() } }   // Valiktor's validate
     saveUser(req).orFail()
 }
 ```
@@ -492,10 +492,13 @@ fun processOrder(id: Int): Res<Order, AppError> = rail {
 }
 ```
 
-`orFailContext` attaches a frame at the point of short-circuit:
+`orFailContext` attaches a frame at the point of short-circuit (it is a `rail {}`-scoped operation):
 
 ```kotlin
-val user = fetchUser(id).orFailContext { "fetching user $id" }
+rail {
+    val user = fetchUser(id).orFailContext { "fetching user $id" }
+    // ...
+}
 ```
 
 ### Reading context at the boundary

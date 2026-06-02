@@ -83,7 +83,6 @@ Result-Kit follows [Semantic Versioning](https://semver.org/). From `1.1.0` onwa
 - Adding new factory methods, extension functions, or overloads.
 - Improving error messages or KDoc.
 - Optimizing internal implementation while preserving observable behavior.
-- Optimizing internal implementation while preserving observable behavior.
 
 The library is JVM-only at present. Kotlin Multiplatform support is a future possibility but not committed.
 
@@ -241,8 +240,8 @@ rail {
 
 // A library that throws with all violations (Valiktor):
 rail {
-    val v = catching { e -> AppError.Invalid((e as ConstraintViolationException).constraintViolations.map { it.property }) }
-    v { validate(req) { validate(Request::email).isEmail() } }
+    val toError = catching { e -> AppError.Invalid((e as ConstraintViolationException).constraintViolations.map { it.property }) }
+    toError { validate(req) { validate(Request::email).isEmail() } }   // Valiktor's validate
     save(req).orFail()
 }
 ```
