@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Additive, zero-dependency, fully backward compatible (next minor release).
+
+### Added
+- `Sequence<Res>` extensions (`Sequence.kt`) — lazy counterparts of the `Iterable` helpers: `allOk`, `anyOk`, `anyFail`, `combine`, `partition`, `Sequence<V>.tryMap`, `tryForEach`, plus **lazy** `filterOk`/`filterFail` that return `Sequence` (vs the `Iterable` versions' `List`). Short-circuiting terminals never pull past the first Fail.
+- `Rail<E>.use(resource) { }` — frame-scoped resource management over `kotlin.use`. Closes the `AutoCloseable` on Ok completion, on exception, on rail short-circuit (`FailException` is a `Throwable`), and on cancellation. Resource state lives on the call frame, not the shared `Rail` receiver, so it is concurrency-safe by construction.
+- Reified subtype ops for sealed error hierarchies — `Res.mapErrorIf<F : E> { }` (map only errors that are an `F`, preserving frames), `Res.recoverIf<F : E> { }` (recover only an `F`, leaving other errors Fail), and `Rail.catchingOnly<T : Exception>({ }) { }` (catch only exception type `T`, rethrow the rest; `CancellationException` rethrown first, throwing mapper wrapped in `ErrorMapperException`). The subtype is inferred from the lambda parameter type.
+
 ## [2.0.0] - 2026-06-01
 
 A complete redesign around the `Res<V, E>` inline value class and the `rail {}` DSL. This **fully supersedes the 1.0.0 API** — there is no incremental migration; adopt the new surface directly. The 1.x line was never published, so this is the first release since 1.0.0 and folds all of that work into one version.
@@ -32,5 +41,6 @@ A complete redesign around the `Res<V, E>` inline value class and the `rail {}` 
 
 Initial release.
 
+[Unreleased]: https://github.com/phansen314/result-kit/compare/v2.0.0...HEAD
 [2.0.0]: https://github.com/phansen314/result-kit/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/phansen314/result-kit/releases/tag/v1.0.0
