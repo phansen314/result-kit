@@ -80,6 +80,7 @@ public final class tech/codingzen/resultkit/Rail {
 	public final fun orFail-f9Uky-g (Ljava/lang/Object;)Ljava/lang/Object;
 	public final fun orFailContext-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public final fun orFailContext-9lRxS48 (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
+	public final fun use (Ljava/lang/AutoCloseable;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;
 	public final fun withFrame (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public final fun withFrame (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 }
@@ -145,6 +146,18 @@ public final class tech/codingzen/resultkit/ResKt {
 	public static final fun toResOr (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public static final fun toResult-48CL6Po (Ljava/lang/Object;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 	public static final fun toResult-f9Uky-g (Ljava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class tech/codingzen/resultkit/SequenceKt {
+	public static final fun allOk (Lkotlin/sequences/Sequence;)Z
+	public static final fun anyFail (Lkotlin/sequences/Sequence;)Z
+	public static final fun anyOk (Lkotlin/sequences/Sequence;)Z
+	public static final fun combine (Lkotlin/sequences/Sequence;)Ljava/lang/Object;
+	public static final fun filterFail (Lkotlin/sequences/Sequence;)Lkotlin/sequences/Sequence;
+	public static final fun filterOk (Lkotlin/sequences/Sequence;)Lkotlin/sequences/Sequence;
+	public static final fun partition (Lkotlin/sequences/Sequence;)Lkotlin/Pair;
+	public static final fun tryForEach (Lkotlin/sequences/Sequence;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
+	public static final fun tryMap (Lkotlin/sequences/Sequence;Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
 }
 
 public final class tech/codingzen/resultkit/ZipKt {

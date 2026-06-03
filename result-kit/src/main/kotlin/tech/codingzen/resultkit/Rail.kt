@@ -107,6 +107,43 @@ public class Rail<E> @PublishedApi internal constructor() {
         }
 
     /**
+     * Catches **only** exceptions of the reified type [T] thrown inside [block], maps them via
+     * [mapError], and short-circuits the outer [rail]. Any other exception propagates unchanged —
+     * unlike [catching], which maps every [Exception].
+     *
+     * Use this when you expect a specific failure (e.g. `IOException`) but want programming errors
+     * to crash rather than be silently translated. The caught type [T] is inferred from the
+     * [mapError] lambda's parameter type:
+     *
+     * ```
+     * rail<String, AppError> {
+     *     catchingOnly({ e: IOException -> AppError.Io(e) }) { readFile(path) }
+     * }
+     * ```
+     *
+     * [fail] inside [block] bypasses the catch (FailException is a [Throwable], not an [Exception]).
+     * [CancellationException] is always rethrown (it may be a subtype of [T], e.g. when `T` is
+     * `RuntimeException`). A throwing [mapError] surfaces as [ErrorMapperException], consistent with
+     * [catching].
+     */
+    public inline fun <V, reified T : Exception> catchingOnly(
+        mapError: (T) -> E,
+        block: Rail<E>.() -> V,
+    ): V =
+        try {
+            this@Rail.block()
+        // FQN: stdlib CancellationException, not kotlinx — avoids runtime dependency on kotlinx-coroutines
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e !is T) throw e
+            try { fail(mapError(e)) } catch (me: Exception) {
+                if (me is kotlin.coroutines.cancellation.CancellationException) throw me
+                throw ErrorMapperException(e, me)
+            }
+        }
+
+    /**
      * Member extension: unwraps [res] if Ok, or maps the error via [ErrorMappingRail.mapError]
      * and short-circuits the outer [rail] with the mapped error.
      *
@@ -254,6 +291,27 @@ public class Rail<E> @PublishedApi internal constructor() {
             throw FailException(e.error, e.scope, e.frames + frame)
         }
     }
+
+    /**
+     * Acquires [resource] for the duration of [block] and closes it afterward — on normal
+     * completion, on an exception, and on rail short-circuit. The latter works because [fail]/
+     * [orFail] throw `FailException` (a [Throwable]) and the underlying [kotlin.use] closes on any
+     * throwable; close also runs on [CancellationException].
+     *
+     * Frame-scoped: the resource lives on the call frame, not on the shared [Rail] receiver, so
+     * there is no shared mutable state and `use` is safe even if [block] spawns coroutines. Nest
+     * calls for multiple resources; they close in reverse (innermost first).
+     *
+     * ```
+     * rail<Data, Err> {
+     *     use(openFile(path)) { file ->
+     *         parse(file).orFail()   // file closed whether this succeeds or short-circuits
+     *     }
+     * }
+     * ```
+     */
+    public inline fun <T : AutoCloseable, V> use(resource: T, block: Rail<E>.(T) -> V): V =
+        resource.use { this.block(it) }
 
     public companion object {
         /** Creates a top-level [ExceptionMappingRail] for catching exceptions and mapping them to typed errors. */

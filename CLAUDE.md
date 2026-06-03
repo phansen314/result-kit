@@ -85,6 +85,10 @@ Transforms:
 - `flatMap(transform: (V) -> Res<U, E>): Res<U, E>` — escape hatch for chaining outside rail; prefer rail + orFail
 - `flatten(): Res<V, E>` — unwraps `Res<Res<V, E>, E>`
 
+Reified subtype ops (`Reified.kt`) — for sealed error hierarchies. The subtype `F` is inferred from the lambda parameter type (`res.mapErrorIf { e: NotFound -> ... }`), not specified as `<F>` (the function also has `V`/`E` type params, so Kotlin's all-or-none rule blocks single-arg `<F>`):
+- `mapErrorIf<reified F : E>(transform: (F) -> E): Res<V, E>` — transforms the error only if it `is F`; Ok and non-`F` errors pass through. **Preserves frames** (like `mapError`).
+- `recoverIf<reified F : E>(transform: (F) -> V): Res<V, E>` — converts Fail→Ok only if the error `is F`; non-`F` errors stay Fail (keep frames), recovered branch drops frames (now Ok).
+
 Side effects:
 - `onOk(action): Res<V, E>` — runs action, returns self
 - `onFail(action): Res<V, E>` — runs action, returns self
@@ -135,6 +139,10 @@ Inside `rail {}`, the receiver `Rail<E>` provides:
 - `catching(mapError: (Exception) -> E): ExceptionMappingRail<E>`
 - `mapping(mapError: (D) -> E): ErrorMappingRail<D, E>`
 - `catchingMapping(onError: (D) -> E, onException: (Exception) -> E): MappingRail<D, E>`
+- `catchingOnly<reified T : Exception>(mapError: (T) -> E, block: Rail<E>.() -> V): V` — catches **only** `T` (and subtypes), maps + short-circuits; any other exception propagates unchanged. `T` is inferred from the `mapError` lambda parameter type. `FailException` passes through (Throwable, not Exception); `CancellationException` rethrown first (it may be a `T` subtype); throwing `mapError` wraps to `ErrorMapperException` — consistent with `catching`.
+
+**Resource management:**
+- `use<T : AutoCloseable, V>(resource: T, block: Rail<E>.(T) -> V): V` — thin wrapper over `kotlin.use`; closes `resource` on Ok completion, on exception, and on rail short-circuit (`FailException` is a Throwable, which `use` closes on). **Frame-scoped** (resource lives on the call frame, not the shared `Rail` receiver) so it is safe even if `block` spawns coroutines — deliberately chosen over a register-style stack-on-`Rail`, which would race on concurrent acquire. Nest for multiple resources (close in reverse, innermost first).
 
 **Companion factories** (top-level, return Res instead of short-circuiting):
 - `Rail.catching(...)`, `Rail.mapping(...)`, `Rail.catchingMapping(...)`
@@ -278,6 +286,10 @@ Frames are stored in `Failure.frames: List<Frame>` (default `emptyList()`). Also
 | `.orElse { transform }` on Fail→Fail | Merges: `Failure(rec.error, original.frames + rec.frames)` — **preserves frames** |
 | `.orElse { transform }` on Fail→Ok | Returns recovery Ok unchanged — frames discarded (Ok has none) |
 | `.recover { transform }` on Fail | Returns Ok — frames discarded (Ok has none) |
+| `.mapErrorIf<F> { transform }` on Fail matching `F` | Creates new `Failure(newError, existingFrames)` — **preserves frames** |
+| `.mapErrorIf<F> { transform }` on Fail not matching `F` | Passes `Failure` through unchanged — **preserves frames** |
+| `.recoverIf<F> { transform }` on Fail matching `F` | Returns Ok — frames discarded (Ok has none) |
+| `.recoverIf<F> { transform }` on Fail not matching `F` | Passes `Failure` through unchanged — **preserves frames** |
 | `.orFail()` inside rail | Throws `FailException(error, scope, inlineValue.frames)` — **preserves frames** |
 | `.orFail(mapError)` inside rail | Throws `FailException(mapError(error), scope, inlineValue.frames)` — **preserves frames** |
 | `.orFailContext { msg }` | Reads `inlineValue.frames`, appends new frame, throws with them — **correct** |
@@ -385,6 +397,28 @@ On `Iterable<V>`:
 - `tryForEach(action: (V) -> Res<*, E>): Res<Unit, E>` — fail-fast iteration
 
 All use direct `inlineValue is Failure` checks for performance (no virtual dispatch).
+
+## Composition: Sequence Extensions
+
+Lazy counterparts of the Iterable extensions (`Sequence.kt`), same internal `inlineValue is Failure`
+checks. The set mirrors Iterable with one deliberate divergence: laziness, following
+`kotlin.sequences` conventions.
+
+On `Sequence<Res<V, E>>`:
+- `allOk()` / `anyOk()` / `anyFail()`: `Boolean` — terminal, short-circuiting (stop pulling early)
+- `filterOk(): Sequence<V>` — **lazy intermediate** (Iterable returns `List`); nothing evaluated until consumed
+- `filterFail(): Sequence<E>` — **lazy intermediate** (frames dropped)
+- `combine(): Res<List<V>, E>` — terminal, fail-fast; on a lazy source, elements after the first Fail are never evaluated (preserves the failing element's frames)
+- `partition(): Pair<List<V>, List<E>>` — terminal, eager (frames dropped)
+
+On `Sequence<V>`:
+- `tryMap(transform: (V) -> Res<U, E>): Res<List<U>, E>` — terminal, fail-fast (preserves frames)
+- `tryForEach(action: (V) -> Res<*, E>): Res<Unit, E>` — terminal, fail-fast
+
+`tryMap`/`tryForEach` are `inline` (user lambda) like the Iterable twins; `filterOk`/`filterFail`
+are plain functions returning a lazy `Sequence` built from stdlib `filter`+`map`. Frame behavior is
+identical to the Iterable rows in the frame-flow table above (`combine`/`tryMap` preserve;
+`filterFail`/`partition` drop).
 
 ## Design Invariants
 
